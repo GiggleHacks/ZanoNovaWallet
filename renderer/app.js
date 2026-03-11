@@ -3,6 +3,8 @@ const ZANO_ASSET_ID = "d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e05
 const FEE_ATOMIC = 10_000_000_000n; // 0.01 ZANO
 let sessionPassword = null; // in-memory only
 let lastZanoUnlockedAtomic = null; // tracks latest unlocked ZANO in atomic units
+const HISTORY_PAGE_SIZE = 5;
+let historyPage = 0;
 
 function requireSessionPassword() {
   if (sessionPassword) return sessionPassword;
@@ -324,11 +326,21 @@ function renderHistory(result) {
           <div class="confLabel">${confCount}/10</div>
         </div>
       </div>
-      <div class="hint">${ts} · height ${height} · payment_id ${t.payment_id || "-"}</div>
+      <div class="hint">${ts} · payment_id ${t.payment_id || "-"}</div>
       <div class="hash">${t.tx_hash || ""}</div>
     `;
     root.appendChild(el);
   }
+}
+
+function updateHistoryPager(page, hasNext) {
+  const label = $("historyPageLabel");
+  const prev = $("btnHistoryPrev");
+  const next = $("btnHistoryNext");
+  if (!label || !prev || !next) return;
+  label.textContent = `Page ${page + 1}`;
+  prev.disabled = page <= 0;
+  next.disabled = !hasNext;
 }
 
 async function refreshBalance() {
@@ -338,10 +350,11 @@ async function refreshBalance() {
   if ($("balances")) renderBalances(balances);
 }
 
-async function refreshHistory() {
+async function refreshHistory(page = historyPage) {
+  historyPage = page;
   const res = await walletRpc("get_recent_txs_and_info2", {
-    count: 50,
-    offset: 0,
+    count: HISTORY_PAGE_SIZE,
+    offset: page * HISTORY_PAGE_SIZE,
     order: "FROM_BEGIN_TO_END",
     exclude_mining_txs: true,
     // Include unconfirmed so pending incoming transfers show in history
@@ -351,6 +364,7 @@ async function refreshHistory() {
   });
   const result = res?.result;
   const transfers = result?.transfers || [];
+  const hasNextPage = transfers.length === HISTORY_PAGE_SIZE;
 
   let hasNewIncome = false;
   for (const t of transfers) {
@@ -413,6 +427,7 @@ async function refreshHistory() {
   }
 
   renderHistory(result);
+  updateHistoryPager(page, hasNextPage);
 }
 
 async function makeIntegrated() {
@@ -587,7 +602,7 @@ function wireUi() {
   });
   $("btnRefreshHistory")?.addEventListener("click", async () => {
     try {
-      await refreshHistory();
+      await refreshHistory(0);
     } catch (e) {
       // keep it quiet; history can lag while syncing
     }
@@ -797,6 +812,20 @@ function wireUi() {
       appendLog($("sendLog"), err?.message || String(err));
     }
   });
+
+  const historyPrev = $("btnHistoryPrev");
+  const historyNext = $("btnHistoryNext");
+  if (historyPrev) {
+    historyPrev.addEventListener("click", async () => {
+      if (historyPage <= 0) return;
+      await refreshHistory(historyPage - 1);
+    });
+  }
+  if (historyNext) {
+    historyNext.addEventListener("click", async () => {
+      await refreshHistory(historyPage + 1);
+    });
+  }
 
   // Sounds toggle in Advanced section
   const soundToggle = $("soundToggle");

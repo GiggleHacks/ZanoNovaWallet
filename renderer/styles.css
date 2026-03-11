@@ -321,11 +321,11 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
 .kv .k{color:var(--muted); font-size:11px}
 .kv .v{font-family:var(--mono); font-size:12px}
 
-.history{display:flex; flex-direction:column; gap:10px; margin-top:10px}
+.history{display:flex; flex-direction:column; gap:6px; margin-top:8px}
 .tx{
   border:1px solid var(--border);
-  border-radius:12px;
-  padding:12px;
+  border-radius:10px;
+  padding:8px 10px;
   background: var(--panel2);
 }
 .txTop{
@@ -393,6 +393,18 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
   font-size:11px;
 }
 .hash{font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:8px; word-break:break-all}
+
+.historyPager{
+  margin-top:8px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+}
+.pagerLabel{
+  font-size:11px;
+  color:var(--muted);
+}
 
 .dialog::backdrop{
   background: rgba(0,0,0,.72);
