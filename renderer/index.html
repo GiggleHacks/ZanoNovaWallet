@@ -67,6 +67,11 @@
                 </div>
               </div>
               <div id="history" class="history"></div>
+              <div class="historyPager">
+                <button id="btnHistoryPrev" class="btn" type="button">Prev</button>
+                <span id="historyPageLabel" class="pagerLabel">Page 1</span>
+                <button id="btnHistoryNext" class="btn" type="button">Next</button>
+              </div>
             </div>
           </div>
 
@@ -96,6 +101,15 @@
                 </div>
                 <div class="row">
                   <button id="btnShowSeed" class="btn" type="button">Show seed backup</button>
+                </div>
+                <div class="row">
+                  <label class="field">
+                    <span>Sounds</span>
+                    <label class="checkRow">
+                      <input id="soundToggle" type="checkbox" />
+                      <span>Enable sounds for startup, receive, and send</span>
+                    </label>
+                  </label>
                 </div>
                 <div class="hint" id="hintPaths"></div>
               </section>
@@ -196,7 +210,7 @@
           <pre class="log" id="sendLog"></pre>
           <div class="row">
             <button class="btn" value="cancel">Close</button>
-            <button id="btnSend" class="btn primary" value="default">Send</button>
+            <button id="btnSend" class="btn primary" type="button">Send</button>
           </div>
         </form>
       </dialog>

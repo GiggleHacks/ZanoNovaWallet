@@ -2,6 +2,7 @@ const ATOMIC_UNITS = 1_000_000_000_000n;
 const ZANO_ASSET_ID = "d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a";
 const FEE_ATOMIC = 10_000_000_000n; // 0.01 ZANO
 let sessionPassword = null; // in-memory only
+let lastZanoUnlockedAtomic = null; // tracks latest unlocked ZANO in atomic units
 
 function requireSessionPassword() {
   if (sessionPassword) return sessionPassword;
@@ -12,8 +13,14 @@ function requireSessionPassword() {
 }
 
 let startupSoundPlayed = false;
+let soundEnabled = true; // default on (if unset in config)
+
+function isSoundEnabled() {
+  return soundEnabled;
+}
 
 function playStartupSoundOnce() {
+  if (!isSoundEnabled()) return;
   if (startupSoundPlayed) return;
   startupSoundPlayed = true;
   try {
@@ -25,10 +32,22 @@ function playStartupSoundOnce() {
   }
 }
 
+function playSendSound() {
+  if (!isSoundEnabled()) return;
+  try {
+    const audio = new Audio("../resources/zano_nova_send2.mp3");
+    audio.volume = 0.9;
+    audio.play().catch(() => {});
+  } catch {
+    // ignore audio errors
+  }
+}
+
 const knownIncomeTxs = new Set();
 let historyInitialized = false;
 
 function playReceiveSound() {
+  if (!isSoundEnabled()) return;
   try {
     const audio = new Audio("../resources/zano_nova__received.mp3");
     audio.volume = 0.9;
@@ -208,11 +227,17 @@ function renderZanoHeaderBalanceFromGetbalance(res) {
   const subEl = $("zanoBalanceSub");
   if (!balEl || !subEl) return;
   if (!zano) {
+    lastZanoUnlockedAtomic = null;
     setText(balEl, "—");
     setText(subEl, "Unlocked: —");
     return;
   }
   const dp = typeof zano?.asset_info?.decimal_point === "number" ? zano.asset_info.decimal_point : 12;
+  try {
+    lastZanoUnlockedAtomic = BigInt(zano.unlocked ?? 0);
+  } catch {
+    lastZanoUnlockedAtomic = null;
+  }
   setText(balEl, `${atomicToZanoString(zano.total ?? 0, dp)} ZANO`);
   setText(subEl, `Unlocked: ${atomicToZanoString(zano.unlocked ?? 0, dp)} ZANO`);
 }
@@ -279,15 +304,25 @@ function renderHistory(result) {
     const isIncome = native.is_income ?? false;
 
     const ts = t.timestamp ? new Date(Number(t.timestamp) * 1000).toLocaleString() : "";
-    const pill = isPending ? "pending" : "done";
-    const pillText = confirmations == null ? "unknown" : `${confirmations} conf`;
+    const statusLabel = isIncome ? "Received" : "Sent";
+    const confCount = confirmations == null ? 0 : confirmations;
+    const confLabel = `Confirmations ${confCount}/10`;
 
     const el = document.createElement("div");
     el.className = "tx";
     el.innerHTML = `
       <div class="txTop">
-        <div>${isIncome ? "Incoming" : "Outgoing"} · ${atomicToZanoString(amountAtomic)}</div>
-        <div class="pill ${pill}">${pillText}</div>
+        <div class="txMain">
+          <div class="txDir ${isIncome ? "in" : "out"}">${isIncome ? "↓" : "↑"}</div>
+          <div>
+            <div class="txAmount">${atomicToZanoString(amountAtomic)} ZANO</div>
+            <div class="txMeta">${statusLabel}</div>
+          </div>
+        </div>
+        <div class="txConfWrap">
+          <div class="confCircle ${isPending ? "pending" : "done"}" title="${confLabel}"></div>
+          <div class="confLabel">${confCount}/10</div>
+        </div>
       </div>
       <div class="hint">${ts} · height ${height} · payment_id ${t.payment_id || "-"}</div>
       <div class="hash">${t.tx_hash || ""}</div>
@@ -309,7 +344,9 @@ async function refreshHistory() {
     offset: 0,
     order: "FROM_BEGIN_TO_END",
     exclude_mining_txs: true,
-    exclude_unconfirmed: true,
+    // Include unconfirmed so pending incoming transfers show in history
+    // and can trigger the receive sound once.
+    exclude_unconfirmed: false,
     update_provision_info: true,
   });
   const result = res?.result;
@@ -449,6 +486,30 @@ async function send() {
     return;
   }
 
+  // Check unlocked balance vs amount + fee so the user
+  // gets a clear, friendly explanation before we hit RPC.
+  const needed = amountAtomic + FEE_ATOMIC;
+  if (lastZanoUnlockedAtomic != null) {
+    try {
+      const unlocked = BigInt(lastZanoUnlockedAtomic);
+      if (unlocked < needed) {
+        appendLog(
+          $("sendLog"),
+          `Not enough unlocked balance. You need at least ${atomicToZanoString(
+            needed
+          )} ZANO (amount + fee), but only ${atomicToZanoString(unlocked)} ZANO is unlocked.`
+        );
+        appendLog(
+          $("sendLog"),
+          "Newly received funds stay locked until they reach about 10 confirmations. This can take a few minutes depending on the network."
+        );
+        return;
+      }
+    } catch {
+      // If parsing fails, fall through and let RPC decide.
+    }
+  }
+
   const destinations = [
     {
       address: to,
@@ -465,7 +526,41 @@ async function send() {
     push_payer: false,
   });
 
-  appendLog($("sendLog"), res?.result || res);
+  const logEl = $("sendLog");
+  if (logEl) {
+    const result = res?.result || {};
+    const tx = result.tx_details || {};
+    const txId = tx.id || result.tx_hash || tx.tx_hash || "";
+    const assetId = tx.asset_id || ZANO_ASSET_ID;
+    const height = tx.height ?? 0;
+    const confirmations = tx.confirmations ?? 0;
+    const size = tx.size || tx.tx_size || tx.blob_size || "";
+    const paymentId = tx.payment_id || result.payment_id || "-";
+    const comment = tx.comment || result.comment || "";
+    const explorerUrl = txId ? `https://explorer.zano.org/transaction/${txId}` : "";
+
+    logEl.innerHTML = [
+      `<div><strong>Transaction ID</strong>: ${
+        explorerUrl
+          ? `<a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">${txId}</a>`
+          : txId || "-"
+      }</div>`,
+      `<div><strong>Asset ID</strong>: ${assetId || "-"}</div>`,
+      `<div><strong>Height</strong>: ${height}</div>`,
+      `<div><strong>Confirmation</strong>: ${confirmations}</div>`,
+      size ? `<div><strong>Transaction size</strong>: ${size} bytes</div>` : "",
+      `<div><strong>Payment ID</strong>: ${paymentId || "-"}</div>`,
+      comment ? `<div><strong>Comment</strong>: ${comment}</div>` : "",
+    ]
+      .filter(Boolean)
+      .join("");
+  }
+
+  try {
+    playSendSound();
+  } catch {
+    // ignore audio errors
+  }
 }
 
 function wireUi() {
@@ -703,6 +798,20 @@ function wireUi() {
     }
   });
 
+  // Sounds toggle in Advanced section
+  const soundToggle = $("soundToggle");
+  if (soundToggle) {
+    soundToggle.checked = soundEnabled;
+    soundToggle.addEventListener("change", async () => {
+      soundEnabled = Boolean(soundToggle.checked);
+      try {
+        await window.zano.configSet({ soundEnabled });
+      } catch {
+        // ignore config errors
+      }
+    });
+  }
+
   // Security flow
   $("btnViewSeed")?.addEventListener("click", viewSeedPhraseFlow);
   $("seedAck")?.addEventListener("change", () => {
@@ -861,12 +970,22 @@ async function unlockAndAutoStart() {
 async function init() {
   await loadDefaults();
 
+  // Load sound preference from config (default on)
+  try {
+    const cfg = await window.zano.configGet();
+    soundEnabled = cfg.soundEnabled !== false;
+  } catch {
+    soundEnabled = true;
+  }
+
   const sw = await window.zano.simplewalletState();
   setStatus(sw?.status || "stopped");
 
   window.zano.onSimplewalletState((state) => {
     setStatus(state?.status || "stopped");
-    if (state?.status === "running") {
+    // Only play startup sound once the RPC is actually ready (rpcUrl present)
+    // and after the user has provided a session password this run.
+    if (state?.status === "running" && state?.rpcUrl && sessionPassword) {
       playStartupSoundOnce();
     }
     if (state?.lastError) appendLog($("logArea"), `simplewallet error: ${state.lastError}`);
