@@ -1,0 +1,54 @@
+{
+  "name": "zano-nova",
+  "version": "1.0.0",
+  "description": "Zano Nova — Zano Without the Blockchain Wait.",
+  "main": "main\\main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "electron": "^41.0.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "org.zano.simplewallet.light",
+    "productName": "Zano Nova",
+    "files": [
+      "main/**",
+      "renderer/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zano Nova</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo" aria-hidden="true">
+            <img id="zanoLogo" class="zanoLogo" src="./assets/zano-logo.png" alt="Zano" />
+          </div>
+          <div>
+            <div class="title">Zano Nova</div>
+            <div class="subtitle">Zano Without the Blockchain Wait.</div>
+          </div>
+        </div>
+        <div class="status">
+          <span id="swStatusDot" class="dot"></span>
+          <span id="swStatusText">Not started</span>
+        </div>
+      </header>
+
+      <main class="shell">
+        <aside class="sidebar">
+          <button id="navWallet" class="navItem active" type="button">Wallet</button>
+          <button id="navSettings" class="navItem" type="button">Settings</button>
+          <button id="navSecurity" class="navItem" type="button">Security</button>
+        </aside>
+
+        <section class="content">
+          <div id="walletView" class="view">
+            <div class="card">
+              <div class="walletHeader">
+                <div>
+                  <div class="kicker">Balance</div>
+                  <div id="zanoBalance" class="bigBalance">—</div>
+                  <div id="zanoBalanceSub" class="balanceSub">Unlocked: —</div>
+                </div>
+                <div class="row">
+                  <button id="btnOpenSend" class="btn alt" type="button">Send</button>
+                  <button id="btnOpenReceive" class="btn primary" type="button">Receive</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="kicker">My address</div>
+              <div class="addressRow">
+                <input id="myAddress" class="addressInput" readonly placeholder="—" />
+                <button id="btnCopyAddress" class="btn" type="button">Copy</button>
+              </div>
+              <div class="hint" id="copyHint"></div>
+            </div>
+
+            <div class="card">
+              <div class="walletHeader">
+                <div>
+                  <div class="kicker">History</div>
+                  <div class="hint">Recent transfers (pending &lt; 10 confirmations).</div>
+                </div>
+                <div class="row">
+                  <button id="btnRefreshHistory" class="btn" type="button">Refresh</button>
+                </div>
+              </div>
+              <div id="history" class="history"></div>
+            </div>
+          </div>
+
+          <div id="settingsView" class="view hidden">
+            <div class="grid2">
+              <section class="card">
+                <h2>Advanced</h2>
+                <div class="row">
+                  <button id="btnCreateWallet" class="btn primary" type="button">Create new wallet</button>
+                  <button id="btnRestoreWallet" class="btn" type="button">Restore from seed</button>
+                </div>
+                <div class="row">
+                  <label class="field">
+                    <span>Wallet file</span>
+                    <input id="inputWalletFile" type="text" placeholder="(auto in userData)" />
+                  </label>
+                </div>
+                <div class="row">
+                  <label class="field">
+                    <span>Seed phrase (restore only)</span>
+                    <input id="inputSeedPhrase" type="text" placeholder="24/25/26 words, space-separated" />
+                  </label>
+                  <label class="field">
+                    <span>Seed passphrase (optional)</span>
+                    <input id="inputSeedPassphrase" type="password" placeholder="Only if your seed was protected" />
+                  </label>
+                </div>
+                <div class="row">
+                  <button id="btnShowSeed" class="btn" type="button">Show seed backup</button>
+                </div>
+                <div class="hint" id="hintPaths"></div>
+              </section>
+
+              <section class="card">
+                <h2>Connection</h2>
+                <div class="row">
+                  <button id="btnLocateSimplewallet" class="btn" type="button">Locate simplewallet.exe…</button>
+                  <button id="btnOpenSettings" class="btn" type="button">Daemon/RPC settings</button>
+                </div>
+                <div class="row">
+                  <button id="btnStartWallet" class="btn alt" type="button">Start backend (manual)</button>
+                  <button id="btnStopWallet" class="btn danger" type="button">Stop backend</button>
+                </div>
+              </section>
+
+              <section class="card wide">
+                <h2>Log</h2>
+                <pre class="log" id="logArea"></pre>
+              </section>
+            </div>
+          </div>
+
+          <div id="securityView" class="view hidden">
+            <div class="grid2">
+              <section class="card wide">
+                <h2>Security</h2>
+                <div class="hint">
+                  Never share your seed phrase. Anyone who has it can steal your funds. View it privately.
+                </div>
+                <div class="row">
+                  <button id="btnViewSeed" class="btn primary" type="button">VIEW SEED PHRASE</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <div id="unlockOverlay" class="overlay">
+        <div class="overlayCard">
+          <div class="overlayTitle">Enter your wallet password</div>
+          <div class="overlaySub">The backend will start automatically after unlock.</div>
+          <div class="row">
+            <input id="unlockPassword" type="password" placeholder="Password" />
+          </div>
+          <div class="row">
+            <button id="btnUnlock" class="btn primary" type="button">OK</button>
+            <button id="btnUnlockClose" class="btn" type="button">Close</button>
+          </div>
+          <div class="hint" id="unlockHint"></div>
+        </div>
+      </div>
+
+      <dialog id="settingsDialog" class="dialog">
+        <form method="dialog" class="dialogBody">
+          <h3>Settings</h3>
+          <label class="field">
+            <span>Daemon address</span>
+            <div class="inline">
+              <input id="cfgDaemon" type="text" placeholder="37.27.100.59:10500" />
+              <button id="btnCopyDaemon" class="btn" type="button">Copy</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>Wallet RPC bind</span>
+            <div class="inline">
+              <input id="cfgBindIp" type="text" placeholder="127.0.0.1" />
+              <input id="cfgBindPort" type="number" placeholder="12233" />
+            </div>
+          </label>
+          <label class="field">
+            <span>simplewallet.exe path (optional)</span>
+            <div class="inline">
+              <input id="cfgExe" type="text" placeholder="resources\\simplewallet.exe" />
+              <button id="btnBrowseExe" class="btn" type="button">Browse…</button>
+            </div>
+          </label>
+          <div class="row">
+            <button class="btn" value="cancel">Close</button>
+            <button id="btnSaveSettings" class="btn primary" value="default">Save</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="sendDialog" class="dialog">
+        <form method="dialog" class="dialogBody">
+          <h3>Send</h3>
+          <label class="field">
+            <span>To address</span>
+            <input id="sendAddress" type="text" placeholder="Zx… or iZ…" />
+          </label>
+          <label class="field">
+            <span>Amount (ZANO)</span>
+            <input id="sendAmount" type="number" min="0" step="0.000000000001" placeholder="0.00" />
+          </label>
+          <div class="hint">Fee is 0.01 ZANO and is burned.</div>
+          <pre class="log" id="sendLog"></pre>
+          <div class="row">
+            <button class="btn" value="cancel">Close</button>
+            <button id="btnSend" class="btn primary" value="default">Send</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="receiveDialog" class="dialog">
+        <form method="dialog" class="dialogBody">
+          <h3>Receive</h3>
+          <div class="kicker">Your address</div>
+          <div class="addressRow">
+            <input id="recvAddress" class="addressInput" readonly placeholder="—" />
+            <button id="btnCopyRecvAddress" class="btn" type="button">Copy</button>
+          </div>
+          <div class="qrWrap">
+            <img id="recvQr" class="qrImg" alt="QR code for address" />
+          </div>
+          <div class="row">
+            <button id="btnMakeIntegrated" class="btn primary" type="button">Make integrated address</button>
+          </div>
+          <pre class="log" id="recvLog"></pre>
+          <div class="row">
+            <button class="btn" value="cancel">Close</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="seedWarningDialog" class="dialog">
+        <form method="dialog" class="dialogBody">
+          <div class="warningHero">
+            <div class="warningTitle">For Your Eyes Only</div>
+            <div class="warningSub">
+              Never share your Seed Phrase. Anyone who has it can steal your funds. View it privately with no cameras around.
+            </div>
+          </div>
+          <label class="checkRow">
+            <input id="seedAck" type="checkbox" />
+            <span>I understand the risks of sharing my Secret Key.</span>
+          </label>
+          <div class="row">
+            <button class="btn" value="cancel">Cancel</button>
+            <button id="btnConfirmViewSeed" class="btn primary" value="default" disabled>VIEW SECRET KEY</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="seedViewDialog" class="dialog">
+        <form method="dialog" class="dialogBody">
+          <h3>Seed phrase</h3>
+          <div class="hint" id="seedStatus">Seed phrase</div>
+          <div id="seedWords" class="seedWords"></div>
+          <div class="row">
+            <button id="btnCopySeed" class="btn" type="button">Copy</button>
+            <button class="btn" value="cancel">Close</button>
+          </div>
+        </form>
+      </dialog>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+
