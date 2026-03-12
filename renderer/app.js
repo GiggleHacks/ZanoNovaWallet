@@ -3,19 +3,73 @@ const ZANO_ASSET_ID = "d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e05
 const FEE_ATOMIC = 10_000_000_000n; // 0.01 ZANO
 let sessionPassword = null; // in-memory only
 let lastZanoUnlockedAtomic = null; // tracks latest unlocked ZANO in atomic units
+let lastZanoTotalAtomic = null; // tracks latest total ZANO in atomic units
 const HISTORY_PAGE_SIZE = 5;
 let historyPage = 0;
+let currentWalletFile = "";
+
+function makeWalletId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `w_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+}
 
 function requireSessionPassword() {
   if (sessionPassword) return sessionPassword;
-  const p = prompt("Enter your wallet password to continue.");
-  if (!p) return null;
-  sessionPassword = p;
-  return p;
+  return null;
 }
 
 let startupSoundPlayed = false;
 let soundEnabled = true; // default on (if unset in config)
+let uiBusy = false;
+let uiBusyReason = "";
+let tooltipsEnabled = true;
+let startupAudio = null;
+let sendAudio = null;
+let receiveAudio = null;
+let sendSoundUrl = null;
+let receiveSoundUrl = null;
+let soundsPrewarmed = false;
+
+function setUiBusy(busy, reason = "") {
+  uiBusy = Boolean(busy);
+  uiBusyReason = reason ? String(reason) : "";
+  document.body.classList.toggle("busy", uiBusy);
+
+  const ids = [
+    "btnWelcomeCreate",
+    "btnWelcomeOpen",
+    "btnWelcomeRestore",
+    "btnSelectWalletLocation",
+    "btnCreateWalletWizard",
+    "btnCancelAddWallet",
+    "btnSelectRestoreLocation",
+    "btnRestoreWalletWizard",
+    "btnCancelRestoreWallet",
+    "btnLoadWallet",
+    "btnOpenSend",
+    "btnSend",
+    "btnSendMax",
+    "btnHistoryPrev",
+    "btnHistoryNext",
+    "btnRefreshHistory",
+    "btnSaveSettings",
+    "btnLock",
+  ];
+  for (const id of ids) {
+    const el = $(id);
+    if (!el) continue;
+    el.disabled = uiBusy;
+  }
+
+  const hint = $("swStatusText");
+  if (hint && uiBusyReason) {
+    // keep status label readable; don't overwrite actual simplewallet state if busy toggles off quickly
+    hint.title = uiBusyReason;
+  }
+}
 
 function isSoundEnabled() {
   return soundEnabled;
@@ -26,20 +80,34 @@ function playStartupSoundOnce() {
   if (startupSoundPlayed) return;
   startupSoundPlayed = true;
   try {
-    const audio = new Audio("../resources/zano_nova__startup.mp3");
-    audio.volume = 0.9;
-    audio.play().catch(() => {});
+    if (!startupAudio) {
+      startupAudio = new Audio("../resources/zano_nova__startup.mp3");
+      startupAudio.preload = "auto";
+    }
+    startupAudio.pause();
+    startupAudio.currentTime = 0;
+    startupAudio.volume = 0.9;
+    startupAudio.play().catch(() => {});
   } catch {
     // ignore audio errors
   }
 }
 
-function playSendSound() {
+async function playSendSound() {
   if (!isSoundEnabled()) return;
   try {
-    const audio = new Audio("../resources/zano_nova_send2.mp3");
-    audio.volume = 0.9;
-    audio.play().catch(() => {});
+    if (!sendSoundUrl) {
+      const url = await window.zano.getSendSoundUrl?.().catch(() => null);
+      sendSoundUrl = url || "../resources/zano_nova_send2.mp3";
+    }
+    if (!sendAudio) {
+      sendAudio = new Audio(sendSoundUrl);
+      sendAudio.preload = "auto";
+    }
+    sendAudio.pause();
+    sendAudio.currentTime = 0;
+    sendAudio.volume = 0.9;
+    await sendAudio.play().catch(() => {});
   } catch {
     // ignore audio errors
   }
@@ -48,14 +116,83 @@ function playSendSound() {
 const knownIncomeTxs = new Set();
 let historyInitialized = false;
 
-function playReceiveSound() {
+function clearWalletHistoryState() {
+  knownIncomeTxs.clear();
+  historyInitialized = false;
+  historyPage = 0;
+  const root = $("history");
+  if (root) root.innerHTML = `<div class="hint">No transactions (or not synced yet).</div>`;
+  updateHistoryPager(0, false);
+}
+
+function showUnlockOverlay(message) {
+  const hintEl = $("unlockHint");
+  const metaEl = $("unlockWalletMeta");
+  const walletPath =
+    currentWalletFile || $("inputWalletFile")?.value?.trim() || "";
+  if (metaEl) {
+    if (walletPath) {
+      const parts = walletPath.split(/[/\\]/);
+      const fileName = parts[parts.length - 1] || walletPath;
+      metaEl.innerHTML = `Wallet: <strong>${fileName}</strong><br />Path: <span class=\"mono\">${walletPath}</span>`;
+    } else {
+      metaEl.textContent = "";
+    }
+  }
+  if (hintEl) {
+    const text = message || "Enter your wallet password to unlock this wallet.";
+    setText(hintEl, text);
+  }
+  $("unlockOverlay")?.classList.remove("hidden");
+  $("unlockPassword")?.focus?.();
+}
+
+async function playReceiveSound() {
   if (!isSoundEnabled()) return;
   try {
-    const audio = new Audio("../resources/zano_nova__received.mp3");
-    audio.volume = 0.9;
-    audio.play().catch(() => {});
+    if (!receiveSoundUrl) {
+      const url = await window.zano.getReceivedSoundUrl?.().catch(() => null);
+      receiveSoundUrl = url || "../resources/zano__nova_recieved.mp3";
+    }
+    if (!receiveAudio) {
+      receiveAudio = new Audio(receiveSoundUrl);
+      receiveAudio.preload = "auto";
+    }
+    receiveAudio.pause();
+    receiveAudio.currentTime = 0;
+    receiveAudio.volume = 0.9;
+    await receiveAudio.play().catch(() => {});
   } catch {
     // ignore audio errors
+  }
+}
+
+async function prewarmSoundsIfNeeded() {
+  if (soundsPrewarmed || !isSoundEnabled()) return;
+  soundsPrewarmed = true;
+  try {
+    const [sendUrl, recvUrl] = await Promise.all([
+      window.zano.getSendSoundUrl?.().catch(() => null),
+      window.zano.getReceivedSoundUrl?.().catch(() => null),
+    ]);
+    sendSoundUrl = sendUrl || "../resources/zano_nova_send2.mp3";
+    receiveSoundUrl = recvUrl || "../resources/zano__nova_recieved.mp3";
+
+    sendAudio = new Audio(sendSoundUrl);
+    sendAudio.preload = "auto";
+    sendAudio.volume = 0;
+    await sendAudio.play().catch(() => {});
+    sendAudio.pause();
+    sendAudio.currentTime = 0;
+
+    receiveAudio = new Audio(receiveSoundUrl);
+    receiveAudio.preload = "auto";
+    receiveAudio.volume = 0;
+    await receiveAudio.play().catch(() => {});
+    receiveAudio.pause();
+    receiveAudio.currentTime = 0;
+  } catch {
+    // ignore prewarm errors
   }
 }
 
@@ -71,6 +208,95 @@ function appendLog(el, line) {
   const s = typeof line === "string" ? line : JSON.stringify(line, null, 2);
   el.textContent = (el.textContent ? el.textContent + "\n" : "") + s;
   el.scrollTop = el.scrollHeight;
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+let tooltipEl = null;
+
+function setupTooltips() {
+  if (tooltipEl) return;
+  tooltipEl = document.createElement("div");
+  tooltipEl.id = "appTooltip";
+  tooltipEl.className = "tooltipBubble";
+  document.body.appendChild(tooltipEl);
+
+  let tooltipTimer = null;
+  let currentTipTarget = null;
+   let lastPointerX = 0;
+   let lastPointerY = 0;
+
+  function showTooltip(target) {
+    if (!tooltipsEnabled) return;
+    const text = target?.getAttribute("data-tooltip");
+    if (!text) return;
+    const rect = target.getBoundingClientRect();
+    tooltipEl.textContent = text;
+    const padding = 12;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+    // Try to place to the right of the cursor; fall back to the element if needed.
+    let left = (lastPointerX || rect.right) + padding;
+    const maxLeft = viewportWidth - 260 - padding;
+    if (left > maxLeft) left = maxLeft;
+    let top = lastPointerY || rect.top + rect.height / 2;
+    tooltipEl.style.left = `${Math.round(left)}px`;
+    tooltipEl.style.top = `${Math.round(top)}px`;
+    tooltipEl.classList.add("visible");
+  }
+
+  function hideTooltip() {
+    tooltipEl.classList.remove("visible");
+  }
+
+  document.addEventListener(
+    "pointerenter",
+    (e) => {
+      const tipTarget = e.target.closest("[data-tooltip]");
+      if (!tipTarget) return;
+      lastPointerX = e.clientX;
+      lastPointerY = e.clientY;
+      if (tooltipTimer) {
+        clearTimeout(tooltipTimer);
+        tooltipTimer = null;
+      }
+      currentTipTarget = tipTarget;
+      tooltipTimer = setTimeout(() => {
+        if (currentTipTarget === tipTarget) {
+          showTooltip(tipTarget);
+        }
+      }, 3000);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "pointerleave",
+    (e) => {
+      const tipTarget = e.target.closest("[data-tooltip]");
+      if (!tipTarget) return;
+      if (tooltipTimer) {
+        clearTimeout(tooltipTimer);
+        tooltipTimer = null;
+      }
+      if (currentTipTarget === tipTarget) {
+        currentTipTarget = null;
+      }
+      hideTooltip();
+    },
+    true
+  );
+
+  document.addEventListener(
+    "scroll",
+    () => {
+      if (tooltipTimer) {
+        clearTimeout(tooltipTimer);
+        tooltipTimer = null;
+      }
+      currentTipTarget = null;
+      hideTooltip();
+    },
+    true
+  );
 }
 
 function setStatus(status) {
@@ -79,7 +305,7 @@ function setStatus(status) {
   dot.classList.remove("ok", "warn", "bad");
   if (status === "running") dot.classList.add("ok");
   else if (status === "starting" || status === "stopping") dot.classList.add("warn");
-  else if (status === "error") dot.classList.add("bad");
+  else if (status === "error" || status === "stopped") dot.classList.add("bad");
   setText(text, status);
 }
 
@@ -112,8 +338,8 @@ function zanoToAtomic(zanoStr) {
 
 async function loadDefaults() {
   const paths = await window.zano.getPaths();
-  setText($("hintPaths"), `Wallet file default: ${paths.walletPath}`);
-  if (!$("inputWalletFile").value) $("inputWalletFile").value = paths.walletPath;
+  setText($("hintPaths"), `Default folder: ${paths.walletsDir}`);
+  // Don't auto-fill a default wallet file; the user will create/open/restore explicitly.
 }
 
 async function loadSettingsIntoDialog() {
@@ -154,9 +380,18 @@ async function locateSimplewallet() {
 }
 
 async function startWalletRpc(passwordOverride) {
+  clearWalletHistoryState();
   const cfg = await window.zano.configGet();
   const password = passwordOverride ?? sessionPassword ?? $("inputPassword")?.value ?? "";
-  const walletFile = $("inputWalletFile").value.trim();
+  let walletFile = "";
+  const walletInput = $("inputWalletFile");
+  if (walletInput) walletFile = walletInput.value.trim();
+  if (!walletFile) {
+    const paths = await window.zano.getPaths().catch(() => null);
+    const defaultWalletPath = paths?.walletPath ? String(paths.walletPath).trim() : "";
+    const cfgWallet = (cfg.lastWalletPath || "").trim();
+    walletFile = cfgWallet || defaultWalletPath || "";
+  }
   const overrideExe = (cfg.simplewalletExePath || "").trim() || undefined;
 
   if ($("logArea")) $("logArea").textContent = "";
@@ -175,28 +410,6 @@ async function startWalletRpc(passwordOverride) {
   if (!resolved.resolved && Array.isArray(resolved.candidates)) {
     if ($("logArea")) appendLog($("logArea"), `Tried:\n- ${resolved.candidates.join("\n- ")}`);
   }
-
-  // #region agent log
-  fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06be5c" },
-    body: JSON.stringify({
-      sessionId: "06be5c",
-      runId: "pre-fix",
-      hypothesisId: "H4",
-      location: "app.js:startWalletRpc",
-      message: "Start clicked",
-      data: {
-        walletFile,
-        rpcBindIp: cfg.walletRpcBindIp,
-        rpcBindPort: cfg.walletRpcBindPort,
-        daemonAddress: cfg.daemonAddress,
-        exeResolved: Boolean(resolved?.resolved),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
 
   return await window.zano.simplewalletStart({
     walletFile,
@@ -230,6 +443,7 @@ function renderZanoHeaderBalanceFromGetbalance(res) {
   if (!balEl || !subEl) return;
   if (!zano) {
     lastZanoUnlockedAtomic = null;
+    lastZanoTotalAtomic = null;
     setText(balEl, "—");
     setText(subEl, "Unlocked: —");
     return;
@@ -239,6 +453,11 @@ function renderZanoHeaderBalanceFromGetbalance(res) {
     lastZanoUnlockedAtomic = BigInt(zano.unlocked ?? 0);
   } catch {
     lastZanoUnlockedAtomic = null;
+  }
+  try {
+    lastZanoTotalAtomic = BigInt(zano.total ?? 0);
+  } catch {
+    lastZanoTotalAtomic = null;
   }
   setText(balEl, `${atomicToZanoString(zano.total ?? 0, dp)} ZANO`);
   setText(subEl, `Unlocked: ${atomicToZanoString(zano.unlocked ?? 0, dp)} ZANO`);
@@ -295,9 +514,19 @@ function renderHistory(result) {
   }
 
   for (const t of transfers) {
-    const height = t.height ?? 0;
-    const confirmations = curHeight != null ? Math.max(0, Number(curHeight) - Number(height)) : null;
-    const isPending = confirmations == null ? true : confirmations < 10;
+    // Prefer explicit confirmations from RPC when present; fall back to height math.
+    let confirmations = typeof t.confirmations === "number" ? t.confirmations : null;
+    if (confirmations == null) {
+      const heightRaw = t.height;
+      const hasHeight = typeof heightRaw === "number" && heightRaw > 0;
+      if (hasHeight && curHeight != null) {
+        confirmations = Math.max(0, Number(curHeight) - Number(heightRaw));
+      } else {
+        // No usable height yet (likely mempool / 0-conf) – treat as 0 confirmations.
+        confirmations = 0;
+      }
+    }
+    const isPending = confirmations < 10;
 
     // Pick native ZANO subtransfer if present; otherwise first.
     const subs = Array.isArray(t.subtransfers) ? t.subtransfers : [];
@@ -307,11 +536,22 @@ function renderHistory(result) {
 
     const ts = t.timestamp ? new Date(Number(t.timestamp) * 1000).toLocaleString() : "";
     const statusLabel = isIncome ? "Received" : "Sent";
+    const txHash = t.tx_hash || "";
     const confCount = confirmations == null ? 0 : confirmations;
-    const confLabel = `Confirmations ${confCount}/10`;
+    const confDisplay = Math.min(confCount, 10);
+    const confLabel =
+      confCount >= 10 ? "Confirmations 10+ (confirmed)" : `Confirmations ${confDisplay}/10`;
 
     const el = document.createElement("div");
     el.className = "tx";
+    const paymentId = t.payment_id || "";
+    const explorerUrl = txHash
+      ? `https://explorer.zano.org/transaction/${txHash}`
+      : "";
+    const paymentMarkup =
+      paymentId && explorerUrl
+        ? `payment_id <a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">${paymentId}</a>`
+        : `payment_id ${paymentId || "-"}`;
     el.innerHTML = `
       <div class="txTop">
         <div class="txMain">
@@ -323,11 +563,11 @@ function renderHistory(result) {
         </div>
         <div class="txConfWrap">
           <div class="confCircle ${isPending ? "pending" : "done"}" title="${confLabel}"></div>
-          <div class="confLabel">${confCount}/10</div>
+          <div class="confLabel">${confDisplay}/10</div>
         </div>
       </div>
-      <div class="hint">${ts} · payment_id ${t.payment_id || "-"}</div>
-      <div class="hash">${t.tx_hash || ""}</div>
+      <div class="hint">${ts} · ${paymentMarkup}</div>
+      <div class="hash">${txHash}</div>
     `;
     root.appendChild(el);
   }
@@ -343,6 +583,34 @@ function updateHistoryPager(page, hasNext) {
   next.disabled = !hasNext;
 }
 
+function getMaxSendableAtomic() {
+  if (lastZanoUnlockedAtomic == null) return null;
+  const m = lastZanoUnlockedAtomic - FEE_ATOMIC;
+  return m > 0n ? m : 0n;
+}
+
+function updateSendDialogBalances() {
+  const totalEl = $("sendBalanceTotal");
+  const unlockedEl = $("sendBalanceUnlocked");
+  const maxEl = $("sendBalanceMax");
+  if (!totalEl || !unlockedEl || !maxEl) return;
+
+  if (lastZanoTotalAtomic == null && lastZanoUnlockedAtomic == null) {
+    setText(totalEl, "—");
+    setText(unlockedEl, "—");
+    setText(maxEl, "—");
+    return;
+  }
+
+  const total = lastZanoTotalAtomic ?? lastZanoUnlockedAtomic ?? 0n;
+  const unlocked = lastZanoUnlockedAtomic ?? 0n;
+  const max = getMaxSendableAtomic();
+
+  setText(totalEl, `${atomicToZanoString(total)} ZANO`);
+  setText(unlockedEl, `${atomicToZanoString(unlocked)} ZANO`);
+  setText(maxEl, max != null ? `${atomicToZanoString(max)} ZANO` : "—");
+}
+
 async function refreshBalance() {
   const res = await walletRpc("getbalance", {});
   const balances = res?.result?.balances || [];
@@ -355,10 +623,9 @@ async function refreshHistory(page = historyPage) {
   const res = await walletRpc("get_recent_txs_and_info2", {
     count: HISTORY_PAGE_SIZE,
     offset: page * HISTORY_PAGE_SIZE,
-    order: "FROM_BEGIN_TO_END",
+    order: "FROM_END_TO_BEGIN",
     exclude_mining_txs: true,
-    // Include unconfirmed so pending incoming transfers show in history
-    // and can trigger the receive sound once.
+    // Include unconfirmed so 0-confirmation receives show in history and we can play receive sound as soon as they appear.
     exclude_unconfirmed: false,
     update_provision_info: true,
   });
@@ -371,58 +638,19 @@ async function refreshHistory(page = historyPage) {
     const subs = Array.isArray(t.subtransfers) ? t.subtransfers : [];
     const hasIncome = subs.some((s) => s.asset_id === ZANO_ASSET_ID && s.is_income);
     if (!hasIncome) continue;
-    const hash = t.tx_hash;
-    if (!hash) continue;
+    // Use tx_hash when present; for pending (0-conf) some backends may omit it, so fall back to a composite key.
+    const hash = t.tx_hash || `pending:${t.payment_id ?? ""}:${t.timestamp ?? ""}:${subs.map((s) => `${s.amount ?? ""}_${s.is_income}`).join(",")}`;
     if (!knownIncomeTxs.has(hash)) {
-      if (historyInitialized) hasNewIncome = true;
       knownIncomeTxs.add(hash);
+      // Only play sound for receives that appear *after* the first history load (once per new tx).
+      if (historyInitialized) hasNewIncome = true;
     }
   }
 
-  // #region agent log
-  fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "06be5c",
-    },
-    body: JSON.stringify({
-      sessionId: "06be5c",
-      runId: historyInitialized ? "post-init" : "init",
-      hypothesisId: "RX1",
-      location: "renderer/app.js:refreshHistory",
-      message: "history scan",
-      data: {
-        transferCount: transfers.length,
-        newIncomeDetected: hasNewIncome,
-        knownIncomeCount: knownIncomeTxs.size,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-
   if (!historyInitialized) {
     historyInitialized = true;
-  } else if (hasNewIncome) {
-    // #region agent log
-    fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "06be5c",
-      },
-      body: JSON.stringify({
-        sessionId: "06be5c",
-        runId: "post-init",
-        hypothesisId: "RX2",
-        location: "renderer/app.js:refreshHistory",
-        message: "play receive sound",
-        data: {},
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
+  }
+  if (hasNewIncome) {
     playReceiveSound();
   }
 
@@ -431,19 +659,19 @@ async function refreshHistory(page = historyPage) {
 }
 
 async function makeIntegrated() {
-  $("recvLog").textContent = "";
   const res = await walletRpc("make_integrated_address", {});
-  appendLog($("recvLog"), res?.result || res);
+  const integrated =
+    res?.result?.integrated_address || res?.result?.address || res?.result || "";
+  if (integrated && $("recvAddress")) {
+    $("recvAddress").value = integrated;
+    await renderReceiveQr(integrated);
+  }
 }
 
 async function showBaseAddress() {
   const res = await walletRpc("getaddress", {});
   const addr = res?.result?.address;
   if (addr) {
-    if ($("recvLog")) {
-      $("recvLog").textContent = "";
-      appendLog($("recvLog"), { address: addr });
-    }
     if ($("myAddress")) $("myAddress").value = addr;
   }
   return addr || null;
@@ -465,9 +693,9 @@ async function renderReceiveQr(address) {
 
 async function send() {
   $("sendLog").textContent = "";
-  const to = $("sendAddress").value.trim();
+  const toRaw = $("sendAddress").value.trim();
   const amtStr = $("sendAmount").value;
-  if (!to) {
+  if (!toRaw) {
     appendLog($("sendLog"), "Missing destination address.");
     return;
   }
@@ -478,6 +706,8 @@ async function send() {
 
   const selfAddrRes = await walletRpc("getaddress", {}).catch(() => null);
   const selfAddr = selfAddrRes?.result?.address || "";
+
+  const to = toRaw;
 
   // Validate + extract standard address if integrated
   const split = await walletRpc("split_integrated_address", { integrated_address: to }).catch(() => null);
@@ -569,10 +799,11 @@ async function send() {
     ]
       .filter(Boolean)
       .join("");
+
   }
 
   try {
-    playSendSound();
+    await playSendSound();
   } catch {
     // ignore audio errors
   }
@@ -589,7 +820,222 @@ function wireUi() {
     switchView("security");
   });
 
-  $("btnOpenSend")?.addEventListener("click", () => $("sendDialog")?.showModal());
+  $("btnAddWallet")?.addEventListener("click", async () => {
+    $("addWalletLog").textContent = "";
+    $("addWalletName").value = "";
+    $("addWalletPassword").value = "";
+    $("addWalletPassword2").value = "";
+    $("addWalletPathHint").textContent = "No file selected.";
+    selectedCreatePath = null;
+    const btnCreate = $("btnCreateWalletWizard");
+    if (btnCreate) {
+      btnCreate.classList.add("hidden");
+      btnCreate.disabled = true;
+    }
+    switchView("addWallet");
+  });
+
+  $("btnWelcomeCreate")?.addEventListener("click", () => $("btnAddWallet")?.click());
+  $("btnWelcomeOpen")?.addEventListener("click", () => $("btnLoadWallet")?.click());
+  $("btnWelcomeRestore")?.addEventListener("click", () => {
+    $("restoreWalletLog").textContent = "";
+    $("restoreWalletName").value = "";
+    $("restoreSeedPhrase").value = "";
+    $("restoreSeedPassphrase").value = "";
+    $("restoreWalletPassword").value = "";
+    $("restoreWalletPassword2").value = "";
+    $("restoreWalletPathHint").textContent = "No file selected.";
+    switchView("restoreWallet");
+  });
+
+  $("btnOpenRestoreWizard")?.addEventListener("click", () => {
+    $("restoreWalletLog").textContent = "";
+    $("restoreWalletName").value = "";
+    $("restoreSeedPhrase").value = "";
+    $("restoreSeedPassphrase").value = "";
+    $("restoreWalletPassword").value = "";
+    $("restoreWalletPassword2").value = "";
+    $("restoreWalletPathHint").textContent = "No file selected.";
+    switchView("restoreWallet");
+  });
+
+  $("btnCancelAddWallet")?.addEventListener("click", () => {
+    selectedCreatePath = null;
+    const btnCreate = $("btnCreateWalletWizard");
+    if (btnCreate) {
+      btnCreate.classList.add("hidden");
+      btnCreate.disabled = true;
+    }
+    switchView("welcome");
+  });
+  $("btnCancelRestoreWallet")?.addEventListener("click", () => {
+    switchView("welcome");
+  });
+
+  $("seedBackupAck")?.addEventListener("change", () => {
+    const ok = Boolean($("seedBackupAck")?.checked);
+    const btn = $("btnSeedBackupContinue");
+    if (btn) btn.disabled = !ok;
+  });
+  $("btnCopySeedBackup")?.addEventListener("click", async () => {
+    const words = Array.from($("seedBackupWords")?.querySelectorAll(".seedWord") || [])
+      .map((el) => String(el.textContent || "").replace(/^\d+\.\s*/, "").trim())
+      .filter(Boolean);
+    if (!words.length) return;
+    try {
+      await navigator.clipboard.writeText(words.join(" "));
+    } catch {
+      // ignore
+    }
+  });
+  $("btnSeedBackupContinue")?.addEventListener("click", async () => {
+    const walletFile = $("inputWalletFile")?.value?.trim() || "";
+    if (!walletFile) return;
+    const password = sessionPassword;
+    if (!password) return;
+
+    const walletInput = $("inputWalletFile");
+    if (walletInput) walletInput.value = walletFile;
+    await startWalletRpc(password).catch(() => {});
+    await refreshBalance().catch(() => {});
+    await refreshHistory(0).catch(() => {});
+    switchView("wallet");
+  });
+
+  let selectedCreatePath = null;
+  $("btnSelectWalletLocation")?.addEventListener("click", async () => {
+    const p = await window.zano.saveWalletDialog().catch(() => null);
+    if (!p) return;
+    selectedCreatePath = p;
+    $("addWalletPathHint").textContent = p;
+    const btnCreate = $("btnCreateWalletWizard");
+    if (btnCreate) {
+      btnCreate.classList.remove("hidden");
+      btnCreate.disabled = false;
+    }
+  });
+
+  let selectedRestorePath = null;
+  $("btnSelectRestoreLocation")?.addEventListener("click", async () => {
+    const p = await window.zano.saveWalletDialog().catch(() => null);
+    if (!p) return;
+    selectedRestorePath = p;
+    $("restoreWalletPathHint").textContent = p;
+  });
+
+  $("btnCreateWalletWizard")?.addEventListener("click", async () => {
+    const logEl = $("addWalletLog");
+    logEl.textContent = "";
+    const name = $("addWalletName").value.trim();
+    const password = $("addWalletPassword").value;
+    const password2 = $("addWalletPassword2").value;
+    if (!name) return appendLog(logEl, "Enter a wallet name.");
+    if (!password) return appendLog(logEl, "Enter a wallet password.");
+    if (password !== password2) return appendLog(logEl, "Passwords do not match.");
+    if (!selectedCreatePath) {
+      const p = await window.zano.saveWalletDialog().catch(() => null);
+      if (!p) return appendLog(logEl, "Select wallet location first.");
+      selectedCreatePath = p;
+      $("addWalletPathHint").textContent = p;
+    }
+
+    setUiBusy(true, "Creating wallet…");
+    try {
+      const cfg = await window.zano.configGet();
+      const resolved = await resolveExePath();
+      appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
+      if (!resolved.resolved) return appendLog(logEl, "Put simplewallet.exe at resources/simplewallet.exe, or locate it in Settings.");
+
+      let walletFile = await window.zano.suggestNewWalletPath(selectedCreatePath);
+      if (walletFile !== selectedCreatePath) {
+        appendLog(logEl, `File already exists, using: ${walletFile}`);
+        selectedCreatePath = walletFile;
+        $("addWalletPathHint").textContent = walletFile;
+      }
+
+      appendLog(logEl, "Generating new wallet…");
+      const out = await window.zano.walletGenerate({ walletFile, password, simplewalletExePath: cfg.simplewalletExePath });
+      appendLog(logEl, out.output || out);
+
+      await window.zano.configSet({ lastWalletPath: walletFile });
+      currentWalletFile = walletFile;
+      const walletInput = $("inputWalletFile");
+      if (walletInput) walletInput.value = walletFile;
+      sessionPassword = password;
+
+      await showSeedBackupForWallet({ walletFile, password, name });
+      switchView("seedBackup");
+    } catch (e) {
+      appendLog(logEl, e?.message || String(e));
+    } finally {
+      setUiBusy(false);
+    }
+  });
+
+  $("btnRestoreWalletWizard")?.addEventListener("click", async () => {
+    const logEl = $("restoreWalletLog");
+    logEl.textContent = "";
+    const name = $("restoreWalletName").value.trim();
+    const seedPhrase = $("restoreSeedPhrase").value.trim();
+    const seedPassphrase = $("restoreSeedPassphrase").value || "";
+    const password = $("restoreWalletPassword").value;
+    const password2 = $("restoreWalletPassword2").value;
+    if (!name) return appendLog(logEl, "Enter a wallet name.");
+    if (!seedPhrase) return appendLog(logEl, "Enter your seed phrase.");
+    if (!password) return appendLog(logEl, "Enter a wallet password.");
+    if (password !== password2) return appendLog(logEl, "Passwords do not match.");
+    if (!selectedRestorePath) return appendLog(logEl, "Select wallet location first.");
+
+    setUiBusy(true, "Restoring wallet…");
+    try {
+      const cfg = await window.zano.configGet();
+      const resolved = await resolveExePath();
+      appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
+      if (!resolved.resolved) return appendLog(logEl, "Put simplewallet.exe at resources/simplewallet.exe, or locate it in Settings.");
+
+    let walletFile = await window.zano.suggestNewWalletPath(selectedRestorePath);
+    if (walletFile !== selectedRestorePath) {
+      appendLog(logEl, `File already exists, using: ${walletFile}`);
+      selectedRestorePath = walletFile;
+      $("restoreWalletPathHint").textContent = walletFile;
+    }
+
+      appendLog(logEl, "Restoring wallet…");
+      const out = await window.zano.walletRestore({
+        walletFile,
+        password,
+        seedPhrase,
+        seedPassphrase,
+        simplewalletExePath: cfg.simplewalletExePath,
+        daemonAddress: cfg.daemonAddress,
+      });
+      appendLog(logEl, out.output || out);
+
+      await window.zano.configSet({ lastWalletPath: walletFile });
+      currentWalletFile = walletFile;
+      const walletInput2 = $("inputWalletFile");
+      if (walletInput2) walletInput2.value = walletFile;
+
+      // Start backend for restored wallet.
+      sessionPassword = password;
+      await startWalletRpc(password).catch((e) => appendLog(logEl, e?.message || String(e)));
+      await refreshBalance().catch(() => {});
+      await refreshHistory(0).catch(() => {});
+      switchView("wallet");
+    } catch (e) {
+      appendLog(logEl, e?.message || String(e));
+    } finally {
+      setUiBusy(false);
+    }
+  });
+
+  $("btnOpenSend")?.addEventListener("click", async () => {
+    $("sendDialog")?.showModal();
+    try {
+      await refreshBalance();
+    } catch {}
+    updateSendDialogBalances();
+  });
   $("btnOpenReceive")?.addEventListener("click", async () => {
     $("receiveDialog")?.showModal();
     try {
@@ -645,96 +1091,35 @@ function wireUi() {
     appendLog($("logArea"), `Resolved simplewallet.exe:\n${resolved.resolved || "(not found)"}`);
   });
 
-  $("btnCreateWallet").addEventListener("click", async () => {
-    $("logArea").textContent = "";
-    const cfg = await window.zano.configGet();
-    const password = requireSessionPassword();
-    const walletFile = $("inputWalletFile").value.trim();
-    if (!password) return appendLog($("logArea"), "Password is required.");
-    if (!walletFile) return appendLog($("logArea"), "Enter a wallet file path first.");
-
-    const resolved = await resolveExePath();
-    appendLog($("logArea"), `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
-    if (!resolved.resolved) {
-      appendLog($("logArea"), "Put simplewallet.exe at resources/simplewallet.exe, or set the path in Settings.");
-      return;
-    }
+  $("btnLoadWallet")?.addEventListener("click", async () => {
+    const logEl = $("logArea");
+    logEl.textContent = "";
     try {
-      appendLog($("logArea"), "Generating new wallet (this may take a moment)…");
-      const out = await window.zano.walletGenerate({ walletFile, password, simplewalletExePath: cfg.simplewalletExePath });
-      appendLog($("logArea"), out.output || out);
-      appendLog($("logArea"), "Wallet file created. Next: start wallet RPC.");
-    } catch (err) {
-      appendLog($("logArea"), err?.message || String(err));
-    }
-  });
-
-  $("btnRestoreWallet").addEventListener("click", async () => {
-    $("logArea").textContent = "";
-    const cfg = await window.zano.configGet();
-    const password = requireSessionPassword();
-    const walletFile = $("inputWalletFile").value.trim();
-    const seedPhrase = $("inputSeedPhrase").value;
-    const seedPassphrase = $("inputSeedPassphrase").value || "";
-    if (!password) return appendLog($("logArea"), "Password is required.");
-    if (!walletFile) return appendLog($("logArea"), "Enter a wallet file path first.");
-    if (!seedPhrase) return appendLog($("logArea"), "Enter your seed phrase (24/25/26 words).");
-
-    const resolved = await resolveExePath();
-    appendLog($("logArea"), `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
-    if (!resolved.resolved) {
-      appendLog($("logArea"), "Put simplewallet.exe at resources/simplewallet.exe, or set the path in Settings.");
-      return;
-    }
-    try {
-      appendLog($("logArea"), "Restoring wallet from seed (this may take a moment)…");
-      const out = await window.zano.walletRestore({
-        walletFile,
-        password,
-        seedPhrase,
-        seedPassphrase,
-        simplewalletExePath: cfg.simplewalletExePath,
-        daemonAddress: cfg.daemonAddress,
+      setUiBusy(true, "Opening wallet…");
+      const res = await window.zano.openFileDialog({
+        properties: ["openFile"],
+        filters: [{ name: "Zano wallet", extensions: ["zan"] }],
       });
-      appendLog($("logArea"), out.output || out);
-      appendLog($("logArea"), "Wallet restored. Next: start wallet RPC (first sync may take a while).");
-    } catch (err) {
-      appendLog($("logArea"), err?.message || String(err));
-    }
-  });
+      const filePath = res?.filePaths?.[0];
+      if (!filePath) {
+        appendLog(logEl, "Cancelled.");
+        return;
+      }
+      currentWalletFile = filePath;
+      const walletInput = $("inputWalletFile");
+      if (walletInput) walletInput.value = filePath;
+      appendLog(logEl, `Selected wallet file:\n${filePath}`);
 
-  $("btnShowSeed").addEventListener("click", async () => {
-    $("logArea").textContent = "";
-    const cfg = await window.zano.configGet();
-    const password = requireSessionPassword();
-    const walletFile = $("inputWalletFile").value.trim();
-    if (!password) return appendLog($("logArea"), "Password is required.");
-    if (!walletFile) return appendLog($("logArea"), "Enter wallet file path first.");
+      // Stop any running backend and clear old wallet UI state.
+      await window.zano.simplewalletStop().catch(() => {});
+      clearWalletHistoryState();
 
-    const seedProtectionPassword = prompt(
-      "Optional: enter a password to protect the displayed seed (leave blank for unprotected seed)."
-    );
-    if (seedProtectionPassword === null) return;
-
-    const resolved = await resolveExePath();
-    appendLog($("logArea"), `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
-    if (!resolved.resolved) {
-      appendLog($("logArea"), "Put simplewallet.exe at resources/simplewallet.exe, or set the path in Settings.");
-      return;
-    }
-    try {
-      appendLog($("logArea"), "Requesting seed phrase…");
-      const out = await window.zano.walletShowSeed({
-        walletFile,
-        password,
-        seedProtectionPassword,
-        simplewalletExePath: cfg.simplewalletExePath,
-        daemonAddress: cfg.daemonAddress,
-      });
-      appendLog($("logArea"), out.output || out);
-      appendLog($("logArea"), "If you see the seed phrase above, store it securely.");
-    } catch (err) {
-      appendLog($("logArea"), err?.message || String(err));
+      await window.zano.configSet({ lastWalletPath: filePath });
+      showUnlockOverlay("Enter wallet password");
+    } catch (e) {
+      appendLog(logEl, e?.message || String(e));
+    } finally {
+      setUiBusy(false);
     }
   });
 
@@ -790,27 +1175,56 @@ function wireUi() {
       // ignore
     }
   });
-  $("btnMakeIntegrated").addEventListener("click", async () => {
-    try {
-      await makeIntegrated();
-    } catch (err) {
-      appendLog($("recvLog"), err?.message || String(err));
-    }
-  });
-  $("recvLog").addEventListener("dblclick", async () => {
-    // convenient refresh: show standard address on double-click
-    try {
-      await showBaseAddress();
-    } catch {
-      // ignore
-    }
-  });
   $("btnSend").addEventListener("click", async () => {
     try {
       await send();
     } catch (err) {
       appendLog($("sendLog"), err?.message || String(err));
     }
+  });
+
+  const sendAmountEl = $("sendAmount");
+  if (sendAmountEl) {
+    const STEP = 0.1;
+    function getMaxSendableZano() {
+      const maxAtomic = getMaxSendableAtomic();
+      if (maxAtomic == null) return Infinity;
+      return Number(maxAtomic) / Number(ATOMIC_UNITS);
+    }
+    sendAmountEl.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const current = parseFloat(sendAmountEl.value) || 0;
+      const delta = e.deltaY > 0 ? -STEP : STEP;
+      let next = Math.max(0, current + delta);
+      next = Math.round(next * 10) / 10;
+      const maxZ = getMaxSendableZano();
+      if (Number.isFinite(maxZ)) next = Math.min(next, maxZ);
+      sendAmountEl.value = next;
+    }, { passive: false });
+
+    sendAmountEl.addEventListener("input", () => {
+      const raw = parseFloat(sendAmountEl.value);
+      if (Number.isNaN(raw) || raw < 0) {
+        sendAmountEl.value = "";
+        return;
+      }
+      const maxZ = getMaxSendableZano();
+      let v = raw;
+      if (Number.isFinite(maxZ)) v = Math.min(v, maxZ);
+      v = Math.round(v * 10) / 10;
+      if (v !== raw) sendAmountEl.value = String(v);
+    });
+  }
+
+  $("btnSendMax")?.addEventListener("click", () => {
+    const maxAtomic = getMaxSendableAtomic();
+    const el = $("sendAmount");
+    if (!el) return;
+    if (maxAtomic == null) {
+      el.value = "";
+      return;
+    }
+    el.value = atomicToZanoString(maxAtomic);
   });
 
   const historyPrev = $("btnHistoryPrev");
@@ -837,6 +1251,24 @@ function wireUi() {
         await window.zano.configSet({ soundEnabled });
       } catch {
         // ignore config errors
+      }
+    });
+  }
+
+  // Tooltip / help popup toggle in Advanced section
+  const tooltipToggle = $("tooltipToggle");
+  if (tooltipToggle) {
+    tooltipToggle.checked = tooltipsEnabled;
+    tooltipToggle.addEventListener("change", async () => {
+      tooltipsEnabled = Boolean(tooltipToggle.checked);
+      try {
+        await window.zano.configSet({ tooltipsEnabled });
+      } catch {
+        // ignore config errors
+      }
+      // Hide any visible tooltip immediately when turning off
+      if (!tooltipsEnabled && tooltipEl) {
+        tooltipEl.classList.remove("visible");
       }
     });
   }
@@ -908,6 +1340,10 @@ function switchView(which) {
   const wallet = $("walletView");
   const settings = $("settingsView");
   const security = $("securityView");
+  const welcome = $("welcomeView");
+  const addWallet = $("addWalletView");
+  const restoreWallet = $("restoreWalletView");
+  const seedBackup = $("seedBackupView");
   const navWallet = $("navWallet");
   const navSettings = $("navSettings");
   const navSecurity = $("navSecurity");
@@ -915,9 +1351,17 @@ function switchView(which) {
   const isWallet = which === "wallet";
   const isSettings = which === "settings";
   const isSecurity = which === "security";
+  const isWelcome = which === "welcome";
+  const isAddWallet = which === "addWallet";
+  const isRestoreWallet = which === "restoreWallet";
+  const isSeedBackup = which === "seedBackup";
   wallet.classList.toggle("hidden", !isWallet);
   settings.classList.toggle("hidden", !isSettings);
   security.classList.toggle("hidden", !isSecurity);
+  welcome?.classList.toggle("hidden", !isWelcome);
+  addWallet?.classList.toggle("hidden", !isAddWallet);
+  restoreWallet?.classList.toggle("hidden", !isRestoreWallet);
+  seedBackup?.classList.toggle("hidden", !isSeedBackup);
   navWallet.classList.toggle("active", isWallet);
   navSettings.classList.toggle("active", isSettings);
   navSecurity.classList.toggle("active", isSecurity);
@@ -948,6 +1392,39 @@ function extractSeedWords(stdoutText) {
     if (all.length >= n) return all.slice(-n);
   }
   return [];
+}
+
+function renderSeedWordsInto(el, words) {
+  if (!el) return;
+  el.innerHTML = "";
+  words.forEach((w, i) => {
+    const chip = document.createElement("div");
+    chip.className = "seedWord";
+    chip.textContent = `${i + 1}. ${w}`;
+    el.appendChild(chip);
+  });
+}
+
+async function showSeedBackupForWallet({ walletFile, password, name }) {
+  const cfg = await window.zano.configGet();
+  const meta = $("seedBackupMeta");
+  const wordsEl = $("seedBackupWords");
+  const ack = $("seedBackupAck");
+  const cont = $("btnSeedBackupContinue");
+  if (meta) meta.textContent = `${name || "Wallet"} · ${walletFile}`;
+  if (ack) ack.checked = false;
+  if (cont) cont.disabled = true;
+  if (wordsEl) wordsEl.innerHTML = "";
+
+  const out = await window.zano.walletShowSeed({
+    walletFile,
+    password,
+    seedProtectionPassword: "",
+    simplewalletExePath: cfg.simplewalletExePath,
+    daemonAddress: cfg.daemonAddress,
+  });
+  const words = extractSeedWords(out?.output || "");
+  renderSeedWordsInto(wordsEl, words);
 }
 
 async function viewSeedPhraseFlow() {
@@ -982,6 +1459,7 @@ async function unlockAndAutoStart() {
   switchView("wallet");
 
   // Start backend in the background so the overlay closes instantly.
+  setUiBusy(true, "Starting backend…");
   startWalletRpc(sessionPassword)
     .then(async () => {
       await showBaseAddress().catch(() => {});
@@ -991,20 +1469,67 @@ async function unlockAndAutoStart() {
     .catch((e) => {
       // If backend start fails, clear the in-memory password and show the error.
       sessionPassword = null;
-      setText(hintEl, e?.message || String(e));
+      const msg = e?.message || String(e);
+      // simplewallet often exits with code 1 when password is wrong; show a clear message.
+      const isLikelyWrongPassword =
+        /exit\s*1/i.test(msg) && /exited before RPC became ready/i.test(msg);
+      setText(hintEl, isLikelyWrongPassword ? "Password is not correct." : msg);
       $("unlockOverlay")?.classList.remove("hidden");
+    })
+    .finally(() => {
+      setUiBusy(false);
     });
 }
 
 async function init() {
   await loadDefaults();
+  const cfg = await window.zano.configGet().catch(() => ({}));
+  let lastWalletPath = String(cfg?.lastWalletPath || "").trim();
+  const paths = await window.zano.getPaths().catch(() => null);
+  const defaultWalletPath = paths?.walletPath ? String(paths.walletPath).trim() : "";
+  // On first run (no wallet configured), show the official-style welcome screen.
+  // If a wallet exists, remember it and prompt for password.
+  $("unlockOverlay")?.classList.add("hidden");
+  if (!lastWalletPath && defaultWalletPath) {
+    const defaultExists = await window.zano.walletFileExists(defaultWalletPath).catch(() => false);
+    if (defaultExists) {
+      lastWalletPath = defaultWalletPath;
+      await window.zano.configSet({ lastWalletPath }).catch(() => {});
+    }
+  }
+
+  if (!lastWalletPath) {
+    switchView("welcome");
+  } else {
+    const exists = await window.zano.walletFileExists(lastWalletPath).catch(() => false);
+    if (!exists) {
+      await window.zano.configSet({ lastWalletPath: "" }).catch(() => {});
+      switchView("welcome");
+    } else {
+      currentWalletFile = lastWalletPath;
+      const walletInput = $("inputWalletFile");
+      if (walletInput) walletInput.value = lastWalletPath;
+      switchView("wallet");
+      // Returning user: immediately prompt to unlock the last-used wallet.
+      showUnlockOverlay("Enter your wallet password to unlock this wallet.");
+    }
+  }
 
   // Load sound preference from config (default on)
   try {
-    const cfg = await window.zano.configGet();
     soundEnabled = cfg.soundEnabled !== false;
   } catch {
     soundEnabled = true;
+  }
+
+  // Prewarm sounds after config is loaded so playback starts cleanly.
+  prewarmSoundsIfNeeded().catch(() => {});
+
+  // Load tooltip preference from config (default on)
+  try {
+    tooltipsEnabled = cfg.tooltipsEnabled !== false;
+  } catch {
+    tooltipsEnabled = true;
   }
 
   const sw = await window.zano.simplewalletState();
@@ -1022,17 +1547,23 @@ async function init() {
   });
 
   wireUi();
+  setupTooltips();
 
   $("btnUnlock")?.addEventListener("click", unlockAndAutoStart);
   $("btnUnlockClose")?.addEventListener("click", () => {
     $("unlockOverlay")?.classList.add("hidden");
   });
+  $("btnUnlockCreateNew")?.addEventListener("click", () => {
+    $("unlockOverlay")?.classList.add("hidden");
+    switchView("settings");
+  });
   $("unlockPassword")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") unlockAndAutoStart();
   });
 
-  // auto-refresh while running
+  // auto-refresh while running (lower frequency; skip during busy ops)
   setInterval(async () => {
+    if (uiBusy) return;
     const st = await window.zano.simplewalletState().catch(() => null);
     if (st?.status !== "running") return;
     try {
@@ -1041,7 +1572,7 @@ async function init() {
     try {
       await refreshHistory();
     } catch {}
-  }, 10_000);
+  }, 15_000);
 }
 
 init().catch((e) => {

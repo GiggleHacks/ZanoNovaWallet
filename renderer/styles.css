@@ -32,13 +32,15 @@
 html,body{height:100%}
 body{
   margin:0;
+  /* Larger, softer gradients so scrolling doesn’t cause a jarring color shift */
   background:
-    radial-gradient(900px 520px at 18% 6%, rgba(39,76,255,.30), transparent 62%),
-    radial-gradient(900px 560px at 85% 18%, rgba(22,209,214,.22), transparent 60%),
-    radial-gradient(900px 560px at 60% 85%, rgba(163,102,255,.18), transparent 60%),
+    radial-gradient(1600px 900px at 18% 6%, rgba(39,76,255,.22), transparent 78%),
+    radial-gradient(1600px 900px at 85% 18%, rgba(22,209,214,.16), transparent 76%),
+    radial-gradient(1600px 900px at 60% 85%, rgba(163,102,255,.12), transparent 76%),
     var(--bg);
   color:var(--text);
   font-family:var(--sans);
+  transition: background 0.6s ease;
 }
 
 .topbar{
@@ -79,7 +81,7 @@ body{
 
 .shell{
   display:grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 14px;
   padding: 14px;
 }
@@ -97,17 +99,35 @@ body{
   position: sticky;
   top: 70px;
 }
+
+.welcomeCard{
+  max-width: 520px;
+}
+.stack{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top: 14px;
+}
 .navItem{
-  width:100%;
-  text-align:left;
-  appearance:none;
-  border:1px solid var(--border);
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  border: 1px solid var(--border);
   background: rgba(0,0,0,.14);
   color: var(--text);
   border-radius: 12px;
-  padding: 10px 12px;
-  cursor:pointer;
-  font-weight:700;
+  padding: 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+.navIcon{
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
 }
 .navItem:hover{background: rgba(0,0,0,.22)}
 .navItem.active{
@@ -216,6 +236,19 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
   gap: 12px;
   flex-wrap: wrap;
 }
+.balanceCard{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap: 14px;
+}
+.balanceBlock{
+  width: 100%;
+}
+.balanceActions{
+  margin-top: 4px;
+  margin-bottom: 0;
+}
 .bigBalance{
   font-size: 40px;
   font-weight: 800;
@@ -237,10 +270,32 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
   font-size: 12px;
 }
 
+.qrWrap{
+  margin: 16px 0;
+  display:flex;
+  justify-content:center;
+}
+.qrImg{
+  width: 260px;
+  height: 260px;
+}
+
+.sendBalanceInfo{
+  margin-bottom:10px;
+  padding:8px 10px;
+  border-radius:var(--radius);
+  background:rgba(255,255,255,.02);
+  font-size:12px;
+  color:var(--muted);
+}
+.sendBalanceInfo div + div{
+  margin-top:2px;
+}
+
 .overlay{
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,.55);
+  background: rgba(0,0,0,.82);
   display:flex;
   align-items:center;
   justify-content:center;
@@ -250,13 +305,41 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
 .overlayCard{
   width: min(520px, 100%);
   border: 1px solid var(--border);
-  background: rgba(0,0,0,.30);
+  background:
+    radial-gradient(400px 200px at 50% 0%, rgba(39,76,255,.18), transparent 70%),
+    rgba(12,12,58,.98);
   border-radius: var(--radius);
   padding: 16px;
   box-shadow: var(--shadow);
 }
 .overlayTitle{font-size: 18px; font-weight: 800}
 .overlaySub{color: var(--muted); font-size: 13px; margin-top: 4px}
+.overlayFooter{margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border)}
+.mono{font-family: var(--mono);}
+.btnLink{
+  background: none; border: none; padding: 0; font-size: 13px;
+  color: var(--accent, #6b9fff); cursor: pointer; text-decoration: underline;
+}
+.btnLink:hover{color: var(--accent-hover, #8bb5ff)}
+
+.tooltipBubble{
+  position: fixed;
+  max-width: 260px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(0,0,0,.78);
+  color:#fff;
+  pointer-events:none;
+  z-index:9999;
+  opacity:0;
+  transform: translate(0, -6px);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.tooltipBubble.visible{
+  opacity:1;
+  transform: translate(0, 0);
+}
 
 .warningHero{
   padding: 8px 0 2px 0;
@@ -444,10 +527,11 @@ input:focus{border-color: rgba(39,76,255,.70); box-shadow:0 0 0 4px rgba(39,76,2
   color: var(--text);
 }
 .inline{display:flex; gap:10px}
-@media (max-width: 980px){
+@media (max-width: 480px){
   .shell{grid-template-columns:1fr}
-  .sidebar{position: static; height: auto; flex-direction: row}
-  .navItem{flex:1; text-align:center}
+  .sidebar{position: static; height: auto; flex-direction: row; justify-content: center}
+  /* multi-wallet UI removed */
+  .navItem{flex:1; aspect-ratio: auto; max-width: 56px}
   .grid2{grid-template-columns:1fr}
   .card.wide{grid-column:auto}
 }

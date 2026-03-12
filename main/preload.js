@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("zano", {
   getPaths: () => ipcRenderer.invoke("app:getPaths"),
+  getReceivedSoundUrl: () => ipcRenderer.invoke("app:getReceivedSoundUrl"),
+  getSendSoundUrl: () => ipcRenderer.invoke("app:getSendSoundUrl"),
 
   configGet: () => ipcRenderer.invoke("config:get"),
   configSet: (partial) => ipcRenderer.invoke("config:set", partial),
@@ -15,6 +17,8 @@ contextBridge.exposeInMainWorld("zano", {
     ipcRenderer.on("simplewallet:state", (_evt, state) => cb(state));
   },
 
+  suggestNewWalletPath: (path) => ipcRenderer.invoke("wallet:suggestNewWalletPath", path),
+  walletFileExists: (path) => ipcRenderer.invoke("wallet:fileExists", path),
   walletGenerate: (opts) => ipcRenderer.invoke("wallet:generate", opts),
   walletRestore: (opts) => ipcRenderer.invoke("wallet:restore", opts),
   walletShowSeed: (opts) => ipcRenderer.invoke("wallet:showSeed", opts),
@@ -22,5 +26,6 @@ contextBridge.exposeInMainWorld("zano", {
   walletQr: (text) => ipcRenderer.invoke("wallet:qr", { text }),
 
   openFileDialog: (opts) => ipcRenderer.invoke("dialog:openFile", opts),
+  saveWalletDialog: () => ipcRenderer.invoke("dialog:saveWallet"),
 });
 

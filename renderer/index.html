@@ -26,34 +26,137 @@
 
       <main class="shell">
         <aside class="sidebar">
-          <button id="navWallet" class="navItem active" type="button">Wallet</button>
-          <button id="navSettings" class="navItem" type="button">Settings</button>
-          <button id="navSecurity" class="navItem" type="button">Security</button>
+          <button id="navWallet" class="navItem active" type="button" title="Wallet" data-tooltip="View your wallet balance and history.">
+            <svg class="navIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4h-4z"/></svg>
+          </button>
+          <button id="navSettings" class="navItem" type="button" title="Settings">
+            <svg class="navIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-1.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h1.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v1.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-1.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button id="navSecurity" class="navItem" type="button" title="Security">
+            <svg class="navIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </button>
         </aside>
 
         <section class="content">
-          <div id="walletView" class="view">
+          <div id="welcomeView" class="view hidden">
+            <div class="card welcomeCard">
+              <h2>Create or open the wallet to start using Zano</h2>
+              <div class="stack">
+                <button id="btnWelcomeCreate" class="btn primary" type="button" data-tooltip="Set up a brand-new wallet on this device.">Create New Wallet</button>
+                <button id="btnWelcomeOpen" class="btn alt" type="button" data-tooltip="Choose an existing wallet file from your disk.">Open Existing Wallet</button>
+                <button id="btnWelcomeRestore" class="btn" type="button" data-tooltip="Recover a wallet using its seed phrase.">Restore from Backup</button>
+              </div>
+              <div class="hint">Your wallets are stored locally. Passwords are never saved.</div>
+            </div>
+          </div>
+
+          <div id="addWalletView" class="view hidden">
             <div class="card">
-              <div class="walletHeader">
-                <div>
-                  <div class="kicker">Balance</div>
-                  <div id="zanoBalance" class="bigBalance">—</div>
-                  <div id="zanoBalanceSub" class="balanceSub">Unlocked: —</div>
-                </div>
-                <div class="row">
-                  <button id="btnOpenSend" class="btn alt" type="button">Send</button>
-                  <button id="btnOpenReceive" class="btn primary" type="button">Receive</button>
-                </div>
+              <h2>Create New Wallet</h2>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Wallet Name</span>
+                  <input id="addWalletName" type="text" placeholder="Enter a name for your wallet" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Set wallet password</span>
+                  <input id="addWalletPassword" type="password" placeholder="Enter your new password" autocomplete="new-password" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Confirm wallet password</span>
+                  <input id="addWalletPassword2" type="password" placeholder="Confirm password" autocomplete="new-password" />
+                </label>
+              </div>
+              <div class="row">
+                <button id="btnSelectWalletLocation" class="btn" type="button" data-tooltip="Choose where the new wallet file will be saved.">Select Wallet Location</button>
+                <div class="hint" id="addWalletPathHint">No file selected.</div>
+              </div>
+              <div class="row">
+                <button id="btnCreateWalletWizard" class="btn primary hidden" type="button" disabled data-tooltip="Create a new wallet with this name and password.">Create Wallet</button>
+                <button id="btnCancelAddWallet" class="btn" type="button" data-tooltip="Go back without creating a new wallet.">Cancel</button>
+              </div>
+              <pre class="log" id="addWalletLog"></pre>
+            </div>
+          </div>
+
+          <div id="restoreWalletView" class="view hidden">
+            <div class="card">
+              <h2>Restore from Backup</h2>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Wallet Name</span>
+                  <input id="restoreWalletName" type="text" placeholder="Enter a name for your wallet" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Seed phrase</span>
+                  <input id="restoreSeedPhrase" type="text" placeholder="24/25/26 words, space-separated" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Seed passphrase (optional)</span>
+                  <input id="restoreSeedPassphrase" type="password" placeholder="Only if your seed was protected" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Set wallet password</span>
+                  <input id="restoreWalletPassword" type="password" placeholder="Enter a new wallet password" autocomplete="new-password" />
+                </label>
+              </div>
+              <div class="row">
+                <label class="field" style="flex:1">
+                  <span>Confirm wallet password</span>
+                  <input id="restoreWalletPassword2" type="password" placeholder="Confirm password" autocomplete="new-password" />
+                </label>
+              </div>
+              <div class="row">
+                <button id="btnSelectRestoreLocation" class="btn" type="button" data-tooltip="Choose where the restored wallet file will be saved.">Select Wallet Location</button>
+                <div class="hint" id="restoreWalletPathHint">No file selected.</div>
+              </div>
+              <div class="row">
+                <button id="btnRestoreWalletWizard" class="btn primary" type="button" data-tooltip="Recreate a wallet using this seed phrase and password.">Restore Wallet</button>
+                <button id="btnCancelRestoreWallet" class="btn" type="button" data-tooltip="Go back without restoring a wallet.">Cancel</button>
+              </div>
+              <pre class="log" id="restoreWalletLog"></pre>
+            </div>
+          </div>
+
+          <div id="seedBackupView" class="view hidden">
+            <div class="card">
+              <h2>Save your seed phrase</h2>
+              <div class="hint" id="seedBackupMeta"></div>
+              <div id="seedBackupWords" class="seedWords"></div>
+              <div class="row">
+                <button id="btnCopySeedBackup" class="btn" type="button">Copy</button>
+              </div>
+              <label class="checkRow">
+                <input id="seedBackupAck" type="checkbox" />
+                <span>I have securely saved my seed phrase.</span>
+              </label>
+              <div class="row">
+                <button id="btnSeedBackupContinue" class="btn primary" type="button" disabled>Continue</button>
               </div>
             </div>
+          </div>
 
-            <div class="card">
-              <div class="kicker">My address</div>
-              <div class="addressRow">
-                <input id="myAddress" class="addressInput" readonly placeholder="—" />
-                <button id="btnCopyAddress" class="btn" type="button">Copy</button>
+          <div id="walletView" class="view">
+            <div class="card balanceCard">
+              <div class="balanceBlock">
+                <div class="kicker">Balance</div>
+                <div id="zanoBalance" class="bigBalance">—</div>
+                <div id="zanoBalanceSub" class="balanceSub">Unlocked: —</div>
               </div>
-              <div class="hint" id="copyHint"></div>
+              <div class="row balanceActions">
+                <button id="btnOpenSend" class="btn alt" type="button">Send</button>
+                <button id="btnOpenReceive" class="btn primary" type="button">Receive</button>
+              </div>
             </div>
 
             <div class="card">
@@ -77,31 +180,18 @@
 
           <div id="settingsView" class="view hidden">
             <div class="grid2">
-              <section class="card">
+              <section class="card wide">
+                <h2>Wallet</h2>
+                <div class="hint">Create, open, or restore a wallet file.</div>
+                <div class="row" style="margin-top:10px">
+                  <button id="btnAddWallet" class="btn primary" type="button" data-tooltip="Launch the wizard to create a new wallet.">Create new wallet…</button>
+                  <button id="btnLoadWallet" class="btn alt" type="button" data-tooltip="Open a wallet file that already exists on disk.">Open existing…</button>
+                  <button id="btnOpenRestoreWizard" class="btn" type="button" data-tooltip="Restore a wallet from a saved seed phrase.">Restore from backup…</button>
+                </div>
+              </section>
+
+              <section class="card wide">
                 <h2>Advanced</h2>
-                <div class="row">
-                  <button id="btnCreateWallet" class="btn primary" type="button">Create new wallet</button>
-                  <button id="btnRestoreWallet" class="btn" type="button">Restore from seed</button>
-                </div>
-                <div class="row">
-                  <label class="field">
-                    <span>Wallet file</span>
-                    <input id="inputWalletFile" type="text" placeholder="(auto in userData)" />
-                  </label>
-                </div>
-                <div class="row">
-                  <label class="field">
-                    <span>Seed phrase (restore only)</span>
-                    <input id="inputSeedPhrase" type="text" placeholder="24/25/26 words, space-separated" />
-                  </label>
-                  <label class="field">
-                    <span>Seed passphrase (optional)</span>
-                    <input id="inputSeedPassphrase" type="password" placeholder="Only if your seed was protected" />
-                  </label>
-                </div>
-                <div class="row">
-                  <button id="btnShowSeed" class="btn" type="button">Show seed backup</button>
-                </div>
                 <div class="row">
                   <label class="field">
                     <span>Sounds</span>
@@ -110,24 +200,25 @@
                       <span>Enable sounds for startup, receive, and send</span>
                     </label>
                   </label>
+                  <label class="field">
+                    <span>Help popups</span>
+                    <label class="checkRow">
+                      <input id="tooltipToggle" type="checkbox" />
+                      <span>Show help popups when hovering over buttons</span>
+                    </label>
+                  </label>
                 </div>
                 <div class="hint" id="hintPaths"></div>
               </section>
 
-              <section class="card">
-                <h2>Connection</h2>
-                <div class="row">
-                  <button id="btnLocateSimplewallet" class="btn" type="button">Locate simplewallet.exe…</button>
-                  <button id="btnOpenSettings" class="btn" type="button">Daemon/RPC settings</button>
-                </div>
-                <div class="row">
-                  <button id="btnStartWallet" class="btn alt" type="button">Start backend (manual)</button>
-                  <button id="btnStopWallet" class="btn danger" type="button">Stop backend</button>
-                </div>
-              </section>
-
               <section class="card wide">
                 <h2>Log</h2>
+                <div class="row" style="margin-top:8px">
+                  <button id="btnLocateSimplewallet" class="btn" type="button" data-tooltip="Find and save the location of simplewallet.exe.">Locate simplewallet.exe…</button>
+                  <button id="btnOpenSettings" class="btn" type="button" data-tooltip="Change which node (daemon) this wallet connects to.">Daemon/RPC settings</button>
+                  <button id="btnStartWallet" class="btn alt" type="button" data-tooltip="Start the wallet backend process manually.">Start backend (manual)</button>
+                  <button id="btnStopWallet" class="btn danger" type="button" data-tooltip="Stop the running wallet backend process.">Stop backend</button>
+                </div>
                 <pre class="log" id="logArea"></pre>
               </section>
             </div>
@@ -149,7 +240,7 @@
         </section>
       </main>
 
-      <div id="unlockOverlay" class="overlay">
+      <div id="unlockOverlay" class="overlay hidden">
         <div class="overlayCard">
           <div class="overlayTitle">Enter your wallet password</div>
           <div class="overlaySub">The backend will start automatically after unlock.</div>
@@ -160,7 +251,11 @@
             <button id="btnUnlock" class="btn primary" type="button">OK</button>
             <button id="btnUnlockClose" class="btn" type="button">Close</button>
           </div>
+          <div class="hint" id="unlockWalletMeta"></div>
           <div class="hint" id="unlockHint"></div>
+          <div class="overlayFooter">
+            <button id="btnUnlockCreateNew" class="btnLink" type="button">Forgot password? Create a new wallet</button>
+          </div>
         </div>
       </div>
 
@@ -198,19 +293,28 @@
       <dialog id="sendDialog" class="dialog">
         <form method="dialog" class="dialogBody">
           <h3>Send</h3>
+          <div class="sendBalanceInfo">
+            <div>Balance: <span id="sendBalanceTotal">—</span></div>
+            <div>Unlocked (spendable): <span id="sendBalanceUnlocked">—</span></div>
+            <div>Max after fee (0.01 ZANO): <span id="sendBalanceMax">—</span></div>
+          </div>
           <label class="field">
             <span>To address</span>
             <input id="sendAddress" type="text" placeholder="Zx… or iZ…" />
           </label>
           <label class="field">
             <span>Amount (ZANO)</span>
-            <input id="sendAmount" type="number" min="0" step="0.000000000001" placeholder="0.00" />
+            <div class="addressRow">
+              <!-- Use step=\"any\" to avoid browser validation popups; JS still clamps to 0.1 increments and max spendable. -->
+              <input id="sendAmount" type="number" min="0" step="any" placeholder="0.00" data-tooltip="How much ZANO to send from this wallet." />
+              <button id="btnSendMax" class="btn" type="button" data-tooltip="Fill in the maximum spendable amount after fees.">Max</button>
+            </div>
           </label>
           <div class="hint">Fee is 0.01 ZANO and is burned.</div>
           <pre class="log" id="sendLog"></pre>
           <div class="row">
-            <button class="btn" value="cancel">Close</button>
-            <button id="btnSend" class="btn primary" type="button">Send</button>
+            <button class="btn" value="cancel" data-tooltip="Close the send window without sending.">Close</button>
+            <button id="btnSend" class="btn primary" type="button" data-tooltip="Submit this transaction to the network.">Send</button>
           </div>
         </form>
       </dialog>
@@ -220,18 +324,14 @@
           <h3>Receive</h3>
           <div class="kicker">Your address</div>
           <div class="addressRow">
-            <input id="recvAddress" class="addressInput" readonly placeholder="—" />
-            <button id="btnCopyRecvAddress" class="btn" type="button">Copy</button>
+            <input id="recvAddress" class="addressInput" readonly placeholder="—" data-tooltip="Your wallet address for receiving ZANO." />
+            <button id="btnCopyRecvAddress" class="btn" type="button" data-tooltip="Copy your receiving address to the clipboard.">Copy</button>
           </div>
           <div class="qrWrap">
             <img id="recvQr" class="qrImg" alt="QR code for address" />
           </div>
           <div class="row">
-            <button id="btnMakeIntegrated" class="btn primary" type="button">Make integrated address</button>
-          </div>
-          <pre class="log" id="recvLog"></pre>
-          <div class="row">
-            <button class="btn" value="cancel">Close</button>
+            <button class="btn" value="cancel" data-tooltip="Close the receive window.">Close</button>
           </div>
         </form>
       </dialog>

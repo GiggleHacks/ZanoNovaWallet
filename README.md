@@ -37,6 +37,16 @@ npm install
 npm start
 ```
 
+## App icon (Windows)
+
+The Windows .exe and installer use the Zano logo on a black background. The icon is built from `assets/logo.png`:
+
+```bash
+npm run build-icon
+```
+
+This writes `assets/icon.ico`. Run it after changing the logo; then run `npm run dist` so the new icon is included.
+
 ## Build installer (Windows)
 
 ```bash

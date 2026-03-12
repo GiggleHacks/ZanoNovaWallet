@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { pathToFileURL } = require("url");
 const { spawn } = require("child_process");
 const net = require("net");
 const QRCode = require("qrcode");
@@ -9,6 +10,10 @@ const DEFAULTS = Object.freeze({
   walletRpcBindIp: "127.0.0.1",
   walletRpcBindPort: 12233,
   daemonAddress: "37.27.100.59:10500",
+  lastWalletPath: "",
+  soundEnabled: true,
+  tooltipsEnabled: true,
+  simplewalletExePath: "",
 });
 
 function getUserDataPaths() {
@@ -85,24 +90,6 @@ let mainWindow = null;
 let simplewalletProc = null;
 let simplewalletState = { status: "stopped" };
 
-// #region agent log helpers
-function dbg(hypothesisId, location, message, data) {
-  fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06be5c" },
-    body: JSON.stringify({
-      sessionId: "06be5c",
-      runId: "pre-fix",
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
-// #endregion
-
 function simplewalletExeCandidates() {
   // For development: place binary at resources/simplewallet.exe
   // For packaged app: shipped under resources/resources/simplewallet.exe (see build.files + resources/)
@@ -152,17 +139,6 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
     `--daemon-address=${daemonAddress}`,
   ];
 
-  // #region agent log
-  dbg("H1", "main.js:startSimplewallet", "Spawning simplewallet", {
-    walletFile,
-    simplewalletExePath,
-    daemonAddress,
-    rpcBindIp,
-    rpcBindPort,
-    argsRedacted: args.map((a) => (a.startsWith("--password=") ? "--password=REDACTED" : a)),
-  });
-  // #endregion
-
   setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null });
 
   simplewalletProc = spawn(simplewalletExePath, args, {
@@ -175,35 +151,17 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
 
   simplewalletProc.stdout.on("data", (buf) => {
     stdout += buf.toString("utf8");
-    // #region agent log
-    dbg("H2", "main.js:simplewalletProc.stdout", "simplewallet stdout chunk", {
-      len: String(buf?.length ?? 0),
-      tail: stdout.slice(-500),
-    });
-    // #endregion
     setSimplewalletState({ status: "running", stdoutTail: stdout.slice(-8000) });
   });
   simplewalletProc.stderr.on("data", (buf) => {
     stderr += buf.toString("utf8");
-    // #region agent log
-    dbg("H2", "main.js:simplewalletProc.stderr", "simplewallet stderr chunk", {
-      len: String(buf?.length ?? 0),
-      tail: stderr.slice(-500),
-    });
-    // #endregion
     setSimplewalletState({ status: "running", stderrTail: stderr.slice(-8000) });
   });
   simplewalletProc.on("exit", (code) => {
-    // #region agent log
-    dbg("H2", "main.js:simplewalletProc.exit", "simplewallet exited", { code });
-    // #endregion
     setSimplewalletState({ status: "stopped", lastExitCode: code ?? null });
     simplewalletProc = null;
   });
   simplewalletProc.on("error", (err) => {
-    // #region agent log
-    dbg("H2", "main.js:simplewalletProc.error", "simplewallet process error", { message: err?.message || String(err) });
-    // #endregion
     setSimplewalletState({ status: "stopped", lastError: err?.message || String(err) });
     simplewalletProc = null;
   });
@@ -288,7 +246,7 @@ async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 12_00
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 980,
+    width: 860,
     height: 720,
     backgroundColor: "#07172a",
     webPreferences: {
@@ -302,7 +260,7 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
-  tryMigrateFromOldAppName();
+  // Do not auto-migrate or auto-create a default wallet file.
   createMainWindow();
 
   app.on("activate", () => {
@@ -323,6 +281,42 @@ ipcMain.handle("app:getPaths", () => {
   return { userData, walletsDir, walletPath };
 });
 
+ipcMain.handle("wallet:fileExists", (evt, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== "string") return false;
+    return fs.existsSync(filePath);
+  } catch {
+    return false;
+  }
+});
+
+// For "Create new wallet": return a path that does not exist (avoid simplewallet "file already exists").
+ipcMain.handle("wallet:suggestNewWalletPath", (evt, walletPath) => {
+  if (!walletPath || typeof walletPath !== "string") return walletPath;
+  const dir = path.dirname(walletPath);
+  const base = path.basename(walletPath, path.extname(walletPath));
+  const ext = path.extname(walletPath) || ".zan";
+  let candidate = path.join(dir, base + ext);
+  if (!fs.existsSync(candidate)) return candidate;
+  candidate = path.join(dir, base + "_new" + ext);
+  if (!fs.existsSync(candidate)) return candidate;
+  for (let n = 2; n <= 999; n++) {
+    candidate = path.join(dir, base + "_" + n + ext);
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(dir, base + "_new" + ext);
+});
+
+// File URLs for sounds so the renderer can play them in both dev and packaged app.
+function getResourceSoundUrl(filename) {
+  const dir = app.isPackaged
+    ? path.join(process.resourcesPath, "resources")
+    : path.join(app.getAppPath(), "resources");
+  return pathToFileURL(path.join(dir, filename)).href;
+}
+ipcMain.handle("app:getReceivedSoundUrl", () => getResourceSoundUrl("zano__nova_recieved.mp3"));
+ipcMain.handle("app:getSendSoundUrl", () => getResourceSoundUrl("zano_nova_send2.mp3"));
+
 ipcMain.handle("config:get", () => getConfig());
 ipcMain.handle("config:set", (evt, partial) => setConfig(partial || {}));
 
@@ -338,7 +332,7 @@ ipcMain.handle("simplewallet:start", async (evt, input) => {
   const rpcBindIp = input?.rpcBindIp || cfg.walletRpcBindIp;
   const rpcBindPort = input?.rpcBindPort || cfg.walletRpcBindPort;
   const daemonAddress = input?.daemonAddress || cfg.daemonAddress;
-  const walletFile = input?.walletFile || walletPath;
+  const walletFile = input?.walletFile || cfg.lastWalletPath || walletPath;
   const password = input?.password;
   const overrideExe = input?.simplewalletExePath;
 
@@ -354,16 +348,6 @@ ipcMain.handle("simplewallet:start", async (evt, input) => {
   }
 
   const simplewalletExePath = resolveSimplewalletExePath(overrideExe);
-  // #region agent log
-  dbg("H1", "main.js:ipcMain simplewallet:start", "Start requested from renderer", {
-    walletFile,
-    rpcBindIp,
-    rpcBindPort,
-    daemonAddress,
-    overrideExe: overrideExe ? "set" : "unset",
-    resolvedExe: simplewalletExePath ? simplewalletExePath : null,
-  });
-  // #endregion
   startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort });
   const ready = await waitForWalletRpcReady({ rpcBindIp, rpcBindPort }).catch((e) => {
     // ensure state shows stopped if it died quickly
@@ -416,11 +400,15 @@ ipcMain.handle("wallet:generate", async (evt, input) => {
     proc.on("error", reject);
     proc.on("exit", (code) => {
       if (code === 0) return resolve({ stdout, stderr });
+      const combined = (stdout + "\n" + stderr).toLowerCase();
+      if (combined.includes("your wallet has been generated") || combined.includes("generated new wallet")) {
+        return resolve({ stdout, stderr });
+      }
       reject(new Error(`Wallet generation failed (exit ${code}). ${stderr || stdout}`));
     });
   });
 
-  return { ok: true, output: out.stdout };
+  return { ok: true, output: out.stdout + (out.stderr ? "\n" + out.stderr : "") };
 });
 
 ipcMain.handle("wallet:restore", async (evt, input) => {
@@ -525,14 +513,6 @@ ipcMain.handle("wallet:showSeed", async (evt, input) => {
 ipcMain.handle("wallet:rpc", async (evt, input) => {
   const cfg = getConfig();
   const rpcUrl = input?.url || `http://${cfg.walletRpcBindIp}:${cfg.walletRpcBindPort}/json_rpc`;
-  // #region agent log
-  dbg("H3", "main.js:wallet:rpc", "RPC call", {
-    method: input?.method,
-    rpcUrl,
-    simplewalletStatus: simplewalletState?.status,
-    hasProc: Boolean(simplewalletProc && simplewalletProc.exitCode == null),
-  });
-  // #endregion
   try {
     const data = await jsonRpcCall({
       url: rpcUrl,
@@ -571,5 +551,16 @@ ipcMain.handle("wallet:qr", async (evt, input) => {
 ipcMain.handle("dialog:openFile", async (evt, options) => {
   const result = await dialog.showOpenDialog(mainWindow, options || { properties: ["openFile"] });
   return result;
+});
+
+ipcMain.handle("dialog:saveWallet", async () => {
+  const { walletsDir } = getUserDataPaths();
+  const defaultPath = path.join(walletsDir, "wallet_new.zan");
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath,
+    title: "Save new wallet as",
+    filters: [{ name: "Zano wallet", extensions: ["zan"] }],
+  });
+  return result.canceled ? null : result.filePath;
 });
 
