@@ -38,7 +38,8 @@ async function unlockAndAutoStart() {
 
   setUiBusy(true, "Starting backend…");
   startWalletRpc(pwd)
-    .then(async () => {
+    .then(async (result) => {
+      if (result?.stopped) return; // intentional stop — no error
       await showBaseAddress().catch(() => {});
       await refreshBalance().catch(() => {});
       await refreshHistory().catch(() => {});
@@ -537,8 +538,11 @@ async function init() {
     if (st?.status === "running" && st?.rpcUrl && getSessionPassword()) {
       playStartupSoundOnce();
     }
-    if (st?.lastError)                         appendLog($("logArea"), `simplewallet error: ${st.lastError}`);
-    if (typeof st?.lastExitCode === "number")  appendLog($("logArea"), `simplewallet exit code: ${st.lastExitCode}`);
+    // Only log errors/exit codes for unexpected exits (not intentional stops)
+    if (st?.status === "stopped" && st?.lastError)  appendLog($("logArea"), `simplewallet error: ${st.lastError}`);
+    if (st?.status === "stopped" && typeof st?.lastExitCode === "number" && st.lastExitCode !== null && st.lastExitCode !== 0) {
+      appendLog($("logArea"), `simplewallet exit code: ${st.lastExitCode}`);
+    }
   });
 
   wireUi();

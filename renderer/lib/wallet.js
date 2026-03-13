@@ -155,7 +155,7 @@ export async function startWalletRpc(passwordOverride) {
     appendLog(logEl, `Tried:\n- ${resolved.candidates.join("\n- ")}`);
   }
 
-  return window.zano.simplewalletStart({
+  const result = await window.zano.simplewalletStart({
     walletFile,
     password,
     daemonAddress:      cfg.daemonAddress,
@@ -163,6 +163,12 @@ export async function startWalletRpc(passwordOverride) {
     rpcBindPort:        cfg.walletRpcBindPort,
     simplewalletExePath: (cfg.simplewalletExePath || "").trim() || undefined,
   });
+
+  if (result?.stopped) {
+    appendLog(logEl, "Stop requested.");
+    return result;
+  }
+  return result;
 }
 
 export async function stopWalletRpc() {
@@ -275,10 +281,10 @@ export function renderHistory(result) {
     circleEl.classList.add(isPending ? "pending" : "done");
     circleEl.title = confLabel;
     el.querySelector(".confLabel").textContent = `${confDisplay}/${CONFIRMATION_THRESHOLD}`;
-    // Build hint line: "timestamp · payment_id <link>" without innerHTML
+    // Build hint line: "timestamp · <explorer link>" without innerHTML
     const hintEl = el.querySelector(".txHint");
-    hintEl.append(`${ts} · payment_id `);
     if (paymentId && explorerUrl) {
+      hintEl.append(`${ts} · `);
       const a = document.createElement("a");
       a.href = explorerUrl;
       a.target = "_blank";
@@ -286,9 +292,36 @@ export function renderHistory(result) {
       a.textContent = paymentId;
       hintEl.appendChild(a);
     } else {
-      hintEl.append(paymentId || "-");
+      hintEl.append(ts);
     }
-    el.querySelector(".hash").textContent = txHash;
+    const hashEl = el.querySelector(".hash");
+    if (txHash && explorerUrl) {
+      const a = document.createElement("a");
+      a.href = explorerUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = txHash;
+      hashEl.appendChild(a);
+    } else {
+      hashEl.textContent = txHash;
+    }
+
+    const showCopyToast = (btn, text) => {
+      const toast = document.createElement("span");
+      toast.className = "copyToast";
+      toast.textContent = text;
+      btn.appendChild(toast);
+      toast.addEventListener("animationend", () => toast.remove());
+    };
+    el.querySelector(".btnCopyHash")?.addEventListener("click", (e) => {
+      navigator.clipboard.writeText(txHash).catch(() => {});
+      showCopyToast(e.currentTarget, "Copied!");
+    });
+    el.querySelector(".btnCopyExplorerUrl")?.addEventListener("click", (e) => {
+      navigator.clipboard.writeText(explorerUrl).catch(() => {});
+      showCopyToast(e.currentTarget, "URL copied!");
+    });
+
     root.appendChild(el);
   }
 }
@@ -389,11 +422,26 @@ export async function makeIntegrated() {
 
 export async function renderReceiveQr(address) {
   const img = $("recvQr");
+  const wrap = img?.closest(".qrWrap");
   if (!img) return;
   const a = String(address || "").trim();
   if (!a) { img.removeAttribute("src"); return; }
+
+  // Show shimmer placeholder while loading
+  img.classList.add("loading");
+  if (wrap) wrap.classList.add("loading");
+
   const res = await window.zano.walletQr(a);
-  if (res?.ok && res.dataUrl) img.src = res.dataUrl;
+  if (res?.ok && res.dataUrl) {
+    img.src = res.dataUrl;
+    img.onload = () => {
+      img.classList.remove("loading");
+      if (wrap) wrap.classList.remove("loading");
+    };
+  } else {
+    img.classList.remove("loading");
+    if (wrap) wrap.classList.remove("loading");
+  }
 }
 
 // ---------------------------------------------------------------------------

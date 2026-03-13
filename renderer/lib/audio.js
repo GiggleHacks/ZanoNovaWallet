@@ -6,7 +6,7 @@ const log = createLogger("audio");
 
 const SOUNDS = {
   startup: { audioKey: "startupAudio", src: "./assets/zano_nova__startup.mp3" },
-  send:    { audioKey: "sendAudio",    src: "./assets/zano_nova_send2.mp3" },
+  send:    { audioKey: "sendAudio",    src: "./assets/zano_nova_send3.mp3" },
   receive: { audioKey: "receiveAudio", src: "./assets/zano__nova_recieved.mp3" },
 };
 

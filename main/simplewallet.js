@@ -260,6 +260,7 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
     `--daemon-address=${daemonAddress}`,
   ];
 
+  intentionalStop = false;
   setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null });
 
   const exeDir = path.dirname(simplewalletExePath);
@@ -292,8 +293,11 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
   });
 }
 
+let intentionalStop = false;
+
 function stopSimplewallet() {
   if (!simplewalletProc || simplewalletProc.exitCode != null) return;
+  intentionalStop = true;
   setSimplewalletState({ status: "stopping" });
   try {
     simplewalletProc.kill();
@@ -306,6 +310,7 @@ async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 12_00
 
   while (Date.now() < deadline) {
     if (!simplewalletProc || simplewalletProc.exitCode != null) {
+      if (intentionalStop) return { ok: false, stopped: true };
       throw new Error(
         `simplewallet exited before RPC became ready (exit ${simplewalletState?.lastExitCode ?? "unknown"}).`
       );

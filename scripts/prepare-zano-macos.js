@@ -17,8 +17,52 @@ if (process.platform !== "darwin") {
 
 const projectRoot = path.resolve(__dirname, "..");
 const stagingDir = path.join(projectRoot, "build", "vendor", "zano-macos");
+const cacheRootDir = path.join(projectRoot, "build", "vendor", "cache", "zano-macos");
 const MACOS_DMG_URL =
   "https://build.zano.org/builds/zano-macos-x64-release-v2.1.15.457[8621a68].dmg";
+
+function getCachedDmgPath() {
+  let fileName = "zano-macos-release.dmg";
+  try {
+    const url = new URL(MACOS_DMG_URL);
+    fileName = path.basename(url.pathname) || fileName;
+  } catch {
+    // keep fallback name
+  }
+  // Keep a safe cross-platform filename for local cache storage.
+  const safeName = fileName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+  return path.join(cacheRootDir, safeName);
+}
+
+function getStagedLayout() {
+  const contentsDir = path.join(stagingDir, "Contents");
+  const macOsDir = path.join(contentsDir, "MacOS");
+  const boostDir = path.join(contentsDir, "Frameworks", "boost_libs");
+  return {
+    contentsDir,
+    macOsDir,
+    boostDir,
+    simplewalletPath: path.join(macOsDir, "simplewallet"),
+    zanodPath: path.join(macOsDir, "zanod"),
+  };
+}
+
+function hasReusableStagedPayload() {
+  const layout = getStagedLayout();
+  if (!fs.existsSync(layout.simplewalletPath)) return false;
+  if (!fs.existsSync(layout.zanodPath)) return false;
+  if (!fs.existsSync(layout.boostDir)) return false;
+
+  let dylibCount = 0;
+  try {
+    dylibCount = fs
+      .readdirSync(layout.boostDir)
+      .filter((name) => name.endsWith(".dylib")).length;
+  } catch {
+    return false;
+  }
+  return dylibCount > 0;
+}
 
 function runOrThrow(cmd, args) {
   const res = spawnSync(cmd, args, { encoding: "utf8" });
@@ -87,9 +131,36 @@ function findMountedZanoVolume() {
 }
 
 async function main() {
-  const tempDir = path.join(os.tmpdir(), `zano-macos-prepare-${Date.now()}`);
-  const dmgPath = path.join(tempDir, "zano.dmg");
-  fs.mkdirSync(tempDir, { recursive: true });
+  if (hasReusableStagedPayload()) {
+    console.log("Using cached staged macOS binaries from build/vendor/zano-macos (skipping download/mount/unpack).");
+    return;
+  }
+
+  const cachedDmgPath = getCachedDmgPath();
+  fs.mkdirSync(path.dirname(cachedDmgPath), { recursive: true });
+
+  if (!fs.existsSync(cachedDmgPath)) {
+    console.log("Downloading Zano macOS DMG...");
+    const res = await fetch(MACOS_DMG_URL, { redirect: "follow" });
+    if (!res.ok) {
+      console.error("Failed to download DMG:", res.status);
+      process.exit(1);
+    }
+    const tempDir = path.join(os.tmpdir(), `zano-macos-prepare-${Date.now()}`);
+    const tempDmgPath = path.join(tempDir, "zano.dmg");
+    fs.mkdirSync(tempDir, { recursive: true });
+    try {
+      fs.writeFileSync(tempDmgPath, Buffer.from(await res.arrayBuffer()));
+      fs.renameSync(tempDmgPath, cachedDmgPath);
+    } finally {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (_) {}
+    }
+    console.log(`Cached DMG at ${path.relative(projectRoot, cachedDmgPath)}.`);
+  } else {
+    console.log(`Using cached DMG at ${path.relative(projectRoot, cachedDmgPath)}.`);
+  }
 
   let mountPoint = null;
   let mountedByScript = false;
@@ -98,16 +169,8 @@ async function main() {
     if (mountPoint) {
       console.log(`Using existing mounted Zano volume at ${mountPoint} (skipping download/mount).`);
     } else {
-      console.log("Downloading Zano macOS DMG...");
-      const res = await fetch(MACOS_DMG_URL, { redirect: "follow" });
-      if (!res.ok) {
-        console.error("Failed to download DMG:", res.status);
-        process.exit(1);
-      }
-      fs.writeFileSync(dmgPath, Buffer.from(await res.arrayBuffer()));
-
       console.log("Mounting DMG...");
-      const attachOut = runOrThrow("hdiutil", ["attach", dmgPath, "-nobrowse", "-readonly"]);
+      const attachOut = runOrThrow("hdiutil", ["attach", cachedDmgPath, "-nobrowse", "-readonly"]);
       const lines = attachOut.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
       for (const line of lines) {
         const cols = line.split(/\s+/);
@@ -170,9 +233,6 @@ async function main() {
         console.error("Warning: failed to detach DMG:", e.message);
       }
     }
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (_) {}
   }
 }
 

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require("electron");
+const { app, BrowserWindow, Menu, shell } = require("electron");
 const path = require("path");
 
 const { tryMigrateFromOldAppName } = require("./config");
@@ -34,6 +34,15 @@ function createMainWindow() {
     },
   });
   win.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+
+  // Open external links in the system browser, not an Electron popup
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https://") || url.startsWith("http://")) {
+      shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
   return win;
 }
 

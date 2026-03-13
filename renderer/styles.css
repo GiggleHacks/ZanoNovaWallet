@@ -63,6 +63,7 @@
 /* ── Reset ────────────────────────────────────────────────────────────── */
 
 *, *::before, *::after { box-sizing: border-box; }
+html { font-size: 22px; }  /* ← the single knob: change this to scale everything */
 html, body { height: 100%; }
 
 body {
@@ -70,7 +71,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 1rem;
   font-weight: 400;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -151,7 +152,7 @@ body::after {
 .title {
   font-weight: 800;
   letter-spacing: -.02em;
-  font-size: 22px;
+  font-size: 1.294rem;
   background: linear-gradient(135deg, var(--text) 40%, var(--aqua));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -160,7 +161,7 @@ body::after {
 
 .subtitle {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.706rem;
   font-weight: 400;
   letter-spacing: .02em;
   margin-top: 2px;
@@ -171,7 +172,7 @@ body::after {
   gap: 8px;
   align-items: center;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.706rem;
   font-weight: 500;
   letter-spacing: .02em;
   text-transform: uppercase;
@@ -314,7 +315,7 @@ body::after {
     var(--grad-glass);
 }
 .welcomeCard h2 {
-  font-size: 20px;
+  font-size: 1.176rem;
   font-weight: 700;
   letter-spacing: -.01em;
   margin-bottom: 8px;
@@ -331,7 +332,7 @@ body::after {
 
 h2 {
   margin: 0 0 12px 0;
-  font-size: 17px;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: -.01em;
   color: var(--text);
@@ -339,7 +340,7 @@ h2 {
 
 h3 {
   margin: 0 0 16px 0;
-  font-size: 16px;
+  font-size: 0.941rem;
   font-weight: 700;
   letter-spacing: -.01em;
 }
@@ -366,7 +367,7 @@ h3 {
   cursor: pointer;
   font-family: var(--sans);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 0.765rem;
   letter-spacing: .01em;
   transition: all .2s var(--ease-out);
   position: relative;
@@ -462,7 +463,7 @@ h3 {
 }
 .field > span {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.706rem;
   font-weight: 500;
   letter-spacing: .03em;
   text-transform: uppercase;
@@ -476,7 +477,7 @@ input {
   border-radius: var(--radius-sm);
   padding: 11px 14px;
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 0.824rem;
   outline: none;
   transition: all .25s var(--ease-out);
 }
@@ -496,7 +497,7 @@ input:focus {
 
 .hint {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 0.706rem;
   margin-top: 8px;
   line-height: 1.5;
 }
@@ -505,12 +506,12 @@ input:focus {
   background: rgba(255,255,255,.05);
   padding: 1px 5px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 0.647rem;
 }
 
 .kicker {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 0.647rem;
   font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -519,6 +520,13 @@ input:focus {
 
 /* ── Log panels ───────────────────────────────────────────────────────── */
 
+/* The log card: grow to fill remaining viewport */
+.card:has(.log) {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .log {
   margin: 12px 0 0 0;
   padding: 14px 16px;
@@ -526,10 +534,10 @@ input:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   min-height: 80px;
-  max-height: 260px;
+  flex: 1 1 auto;
   overflow: auto;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 0.706rem;
   white-space: pre-wrap;
   color: var(--text-secondary);
   line-height: 1.6;
@@ -583,7 +591,7 @@ input:focus {
 }
 
 .bigBalance {
-  font-size: 44px;
+  font-size: 2.588rem;
   font-weight: 800;
   letter-spacing: -.03em;
   line-height: 1.1;
@@ -595,7 +603,7 @@ input:focus {
 
 .balanceSub {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.765rem;
   margin-top: 8px;
   font-weight: 400;
 }
@@ -632,7 +640,7 @@ input:focus {
 }
 .addressInput {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 0.706rem;
 }
 
 /* ── QR code ──────────────────────────────────────────────────────────── */
@@ -641,6 +649,8 @@ input:focus {
   margin: 20px 0;
   display: flex;
   justify-content: center;
+  position: relative;
+  align-items: center;
 }
 .qrImg {
   width: 240px;
@@ -649,6 +659,29 @@ input:focus {
   border: 1px solid var(--border);
   background: #fff;
   padding: 12px;
+  transition: opacity .3s ease;
+}
+.qrImg.loading {
+  opacity: 0;
+}
+.qrWrap.loading::after {
+  content: "";
+  position: absolute;
+  width: 240px;
+  height: 240px;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    110deg,
+    var(--bg-surface) 25%,
+    var(--bg-surface-hover) 37%,
+    var(--bg-surface) 50%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* ── Send dialog balance info ─────────────────────────────────────────── */
@@ -659,7 +692,7 @@ input:focus {
   border-radius: var(--radius-sm);
   background: rgba(255,255,255,.03);
   border: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 0.706rem;
   color: var(--text-secondary);
   font-family: var(--mono);
 }
@@ -697,14 +730,14 @@ input:focus {
 }
 
 .overlayTitle {
-  font-size: 22px;
+  font-size: 1.294rem;
   font-weight: 800;
   letter-spacing: -.02em;
 }
 
 .overlaySub {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.765rem;
   margin-top: 6px;
   line-height: 1.5;
 }
@@ -722,7 +755,7 @@ input:focus {
   border: none;
   padding: 0;
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 0.765rem;
   color: var(--primary);
   cursor: pointer;
   text-decoration: none;
@@ -740,7 +773,7 @@ input:focus {
   max-width: 260px;
   padding: 8px 12px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 0.706rem;
   font-weight: 400;
   background: rgba(20,22,44,.92);
   backdrop-filter: blur(12px);
@@ -765,7 +798,7 @@ input:focus {
   padding: 8px 0 4px 0;
 }
 .warningTitle {
-  font-size: 22px;
+  font-size: 1.294rem;
   font-weight: 900;
   letter-spacing: -.02em;
   background: linear-gradient(135deg, var(--danger), #FF8C6B);
@@ -775,7 +808,7 @@ input:focus {
 }
 .warningSub {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.765rem;
   margin-top: 8px;
   line-height: 1.5;
 }
@@ -786,7 +819,7 @@ input:focus {
   align-items: flex-start;
   margin: 16px 0 10px 0;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 0.765rem;
 }
 .checkRow input {
   width: 18px;
@@ -809,7 +842,7 @@ input:focus {
   border-radius: 8px;
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 0.706rem;
   font-weight: 500;
   transition: border-color .2s;
 }
@@ -848,7 +881,7 @@ input:focus {
   align-items: center;
 }
 .assetName { font-weight: 700; }
-.assetMeta { color: var(--text-secondary); font-size: 12px; }
+.assetMeta { color: var(--text-secondary); font-size: 0.706rem; }
 .assetNums {
   display: flex;
   gap: 18px;
@@ -858,14 +891,14 @@ input:focus {
 .kv { display: flex; flex-direction: column; }
 .kv .k {
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 0.588rem;
   font-weight: 600;
   letter-spacing: .06em;
   text-transform: uppercase;
 }
 .kv .v {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 0.765rem;
   font-weight: 500;
   margin-top: 2px;
 }
@@ -924,7 +957,7 @@ input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 0.824rem;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -941,11 +974,11 @@ input:focus {
 
 .txAmount {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 0.882rem;
 }
 .txMeta {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 0.647rem;
   margin-top: 2px;
 }
 
@@ -984,20 +1017,75 @@ input:focus {
 
 .confLabel {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: 0.647rem;
   font-weight: 500;
 }
 
+.hashRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+}
 .hash {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 0.647rem;
   color: var(--text-tertiary);
-  margin-top: 8px;
   word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+.hash a {
+  color: inherit;
+  text-decoration: none;
   transition: color .2s;
+}
+.hash a:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 .tx:hover .hash {
   color: var(--text-secondary);
+}
+.iconBtn {
+  position: relative;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 0.706rem;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.iconBtn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: rgba(255,255,255,.05);
+}
+.copyToast {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-surface-hover);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-size: 0.588rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: toastPop .8s ease-out forwards;
+}
+@keyframes toastPop {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-6px); }
 }
 
 .txHint {
@@ -1014,7 +1102,7 @@ input:focus {
   gap: 8px;
 }
 .pagerLabel {
-  font-size: 11px;
+  font-size: 0.647rem;
   color: var(--text-tertiary);
   font-weight: 500;
 }
@@ -1169,6 +1257,6 @@ button:focus-visible {
     padding: 28px 20px;
   }
   .bigBalance {
-    font-size: 32px;
+    font-size: 1.882rem;
   }
 }

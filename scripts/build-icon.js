@@ -27,7 +27,7 @@ async function main() {
     process.exit(1);
   }
 
-  const size = 256;
+  const size = 512;
   // Black background
   const black = sharp({
     create: {
@@ -52,15 +52,18 @@ async function main() {
     .png()
     .toBuffer();
 
-  const buffers = [composed]; // 256
+  // PNG at 512 for electron-builder (mac/linux)
+  fs.writeFileSync(pngIconPath, composed);
+
+  // ICO maxes at 256 — downscale for .ico entries
   const base = sharp(composed);
-  for (const s of [48, 32, 16]) {
-    buffers.push(await base.clone().resize(s, s).png().toBuffer());
+  const icoBuffers = [];
+  for (const s of [256, 48, 32, 16]) {
+    icoBuffers.push(await base.clone().resize(s, s).png().toBuffer());
   }
 
-  const ico = await toIco(buffers);
+  const ico = await toIco(icoBuffers);
   fs.writeFileSync(iconPath, ico);
-  fs.writeFileSync(pngIconPath, composed);
   console.log("Wrote", iconPath);
   console.log("Wrote", pngIconPath);
 }
