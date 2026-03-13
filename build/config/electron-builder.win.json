@@ -1,5 +1,5 @@
 {
-  "extends": "./electron-builder.base.json",
+  "extends": "./build/config/electron-builder.base.json",
   "win": {
     "extraResources": [
       {
