@@ -38,6 +38,48 @@ function isLikelyProjectProcess(command, projectRoot, packageName, productName) 
 function listProjectProcesses() {
   const projectRoot = process.cwd();
   const { packageName, productName } = loadPackageMetadata();
+
+  function parseAndFilter(items) {
+    return items
+      .filter(Boolean)
+      .filter((proc) => Number.isFinite(proc.pid) && proc.pid > 0)
+      .filter((proc) => proc.pid !== process.pid)
+      .filter((proc) => isLikelyProjectProcess(proc.command, projectRoot, packageName, productName));
+  }
+
+  if (process.platform === "win32") {
+    const psScript = [
+      "$ErrorActionPreference = 'Stop'",
+      "Get-CimInstance Win32_Process | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress",
+    ].join("; ");
+
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", psScript], {
+      encoding: "utf8",
+    });
+
+    if (result.status !== 0) {
+      throw new Error(result.stderr || result.stdout || "failed to list running processes");
+    }
+
+    const raw = String(result.stdout || "").trim();
+    if (!raw) return [];
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("failed to parse running process list");
+    }
+
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return parseAndFilter(
+      items.map((item) => ({
+        pid: Number(item?.ProcessId),
+        command: String(item?.CommandLine || ""),
+      }))
+    );
+  }
+
   const result = spawnSync("ps", ["-axo", "pid=,command="], {
     encoding: "utf8",
   });
@@ -46,18 +88,17 @@ function listProjectProcesses() {
     throw new Error(result.stderr || "failed to list running processes");
   }
 
-  return String(result.stdout || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = line.match(/^(\d+)\s+(.*)$/);
-      if (!match) return null;
-      return { pid: Number(match[1]), command: match[2] };
-    })
-    .filter(Boolean)
-    .filter((proc) => proc.pid !== process.pid)
-    .filter((proc) => isLikelyProjectProcess(proc.command, projectRoot, packageName, productName));
+  return parseAndFilter(
+    String(result.stdout || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(.*)$/);
+        if (!match) return null;
+        return { pid: Number(match[1]), command: match[2] };
+      })
+  );
 }
 
 function wait(ms) {
@@ -74,7 +115,14 @@ function isAlive(pid) {
 }
 
 async function killExistingProjectProcesses() {
-  const processes = listProjectProcesses();
+  let processes = [];
+  try {
+    processes = listProjectProcesses();
+  } catch (error) {
+    console.warn(`Process scan skipped: ${error.message || error}`);
+    return;
+  }
+
   if (processes.length === 0) {
     console.log("No existing Zano Nova Electron processes found.");
     return;
