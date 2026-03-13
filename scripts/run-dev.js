@@ -1,8 +1,90 @@
 #!/usr/bin/env node
 
 const { spawn, spawnSync } = require("child_process");
-const { existsSync, readFileSync } = require("fs");
+const { existsSync, readFileSync, readdirSync } = require("fs");
 const { join } = require("path");
+
+/**
+ * Returns the platform-specific vendor directory and expected binary name
+ * that simplewallet should live in during development.
+ */
+function getSimplewalletDevInfo() {
+  const root = process.cwd();
+  if (process.platform === "win32") {
+    return {
+      dir: join(root, "build", "vendor", "simplewallet-win"),
+      binary: "simplewallet.exe",
+      prepareScript: join(root, "scripts", "prepare-simplewallet.js"),
+    };
+  }
+  if (process.platform === "darwin") {
+    return {
+      dir: join(root, "build", "vendor", "zano-macos", "Contents"),
+      binary: null, // macOS uses prepare-zano:mac which has a different structure
+      prepareScript: join(root, "scripts", "prepare-zano-macos.js"),
+    };
+  }
+  // Linux
+  return {
+    dir: join(root, "build", "vendor", "simplewallet-linux"),
+    binary: "simplewallet",
+    prepareScript: null, // no Linux prepare script yet
+  };
+}
+
+/**
+ * Checks whether simplewallet is already staged for the current platform.
+ */
+function isSimplewalletReady() {
+  const info = getSimplewalletDevInfo();
+  if (!existsSync(info.dir)) return false;
+
+  if (info.binary) {
+    return existsSync(join(info.dir, info.binary));
+  }
+
+  // For macOS, just check the directory isn't empty
+  try {
+    return readdirSync(info.dir).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Runs the platform-appropriate prepare script synchronously.
+ * Returns true on success, false on failure.
+ */
+function prepareSimplewalletSync() {
+  const info = getSimplewalletDevInfo();
+  if (!info.prepareScript) {
+    console.error(
+      `No simplewallet prepare script available for platform "${process.platform}".`
+    );
+    console.error("You may need to manually place the binary in:", info.dir);
+    return false;
+  }
+
+  if (!existsSync(info.prepareScript)) {
+    console.error("Prepare script not found at:", info.prepareScript);
+    return false;
+  }
+
+  console.log("simplewallet not found — running prepare script...");
+  console.log(`  node ${info.prepareScript}\n`);
+
+  const result = spawnSync(process.execPath, [info.prepareScript], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
+
+  if (result.status !== 0) {
+    console.error("\nPrepare script failed with exit code", result.status);
+    return false;
+  }
+
+  return true;
+}
 
 function loadPackageMetadata() {
   try {
@@ -161,6 +243,18 @@ function resolveElectronmonBinary() {
 }
 
 async function main() {
+  // --- Auto-prepare simplewallet if missing ---
+  if (!isSimplewalletReady()) {
+    const ok = prepareSimplewalletSync();
+    if (!ok) {
+      throw new Error(
+        "simplewallet is not available and could not be prepared automatically. " +
+          "Run `npm run prepare-simplewallet` manually and check the output."
+      );
+    }
+    console.log("simplewallet prepared successfully.\n");
+  }
+
   const electronmonBinary = resolveElectronmonBinary();
   if (!existsSync(electronmonBinary)) {
     throw new Error(`electronmon binary not found at ${electronmonBinary}`);

@@ -1045,7 +1045,7 @@ input:focus {
   padding: 28px;
   box-shadow: var(--shadow-lg);
   color: var(--text);
-  animation: scaleIn .25s var(--ease-spring) both;
+  animation: scaleIn .25s var(--ease-out) both;
 }
 .dialogBody h3 { margin-top: 0; }
 

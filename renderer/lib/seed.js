@@ -1,6 +1,6 @@
 import { createLogger } from "./logger.js";
 import { $, setText } from "./dom.js";
-import { getSessionPassword } from "./state.js";
+import { getSessionPassword, state } from "./state.js";
 
 const log = createLogger("seed");
 
@@ -76,7 +76,8 @@ export function viewSeedPhraseFlow() {
 export async function handleConfirmViewSeed() {
   const cfg = await window.zano.configGet();
   const password   = getSessionPassword();
-  const walletFile = $("inputWalletFile")?.value?.trim()
+  const walletFile = state.currentWalletFile
+    || $("inputWalletFile")?.value?.trim()
     || (await window.zano.getPaths().catch(() => null))?.walletPath;
   if (!password) return;
 

@@ -57,6 +57,13 @@ export function setStatus(status) {
   else if (status === "starting" || status === "stopping") dot.classList.add("warn");
   else if (status === "error"    || status === "stopped")  dot.classList.add("bad");
   setText(text, status);
+
+  // Disable start when backend is already running/starting; disable stop when stopped
+  const btnStart = $("btnStartWallet");
+  const btnStop  = $("btnStopWallet");
+  const busy = status === "running" || status === "starting";
+  if (btnStart) btnStart.disabled = busy;
+  if (btnStop)  btnStop.disabled  = !busy && status !== "stopping";
 }
 
 /**
