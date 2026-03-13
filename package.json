@@ -1,6 +1,6 @@
 {
   "name": "zano-nova",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Zano Nova — Zano Without the Blockchain Wait.",
   "main": "main/main.js",
   "scripts": {
@@ -16,7 +16,8 @@
     "dist:linux": "node scripts/run-builder.js --linux",
     "prepare-simplewallet": "node scripts/prepare-simplewallet.js",
     "prepare-zano:mac": "node scripts/prepare-zano-macos.js",
-    "build-icon": "node scripts/build-icon.js"
+    "build-icon": "node scripts/build-icon.js",
+    "bump": "npm version patch --no-git-tag-version"
   },
   "keywords": [],
   "author": "",

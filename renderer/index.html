@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Zano Nova</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -40,13 +43,14 @@
         <section class="content">
           <div id="welcomeView" class="view hidden">
             <div class="card welcomeCard">
-              <h2>Create or open the wallet to start using Zano</h2>
+              <h2>Welcome to Zano Nova</h2>
+              <p class="hint" style="margin-top:0">Create or open a wallet to get started.</p>
               <div class="stack">
                 <button id="btnWelcomeCreate" class="btn primary" type="button" data-busy-disable data-tooltip="Set up a brand-new wallet on this device.">Create New Wallet</button>
                 <button id="btnWelcomeOpen" class="btn alt" type="button" data-busy-disable data-tooltip="Choose an existing wallet file from your disk.">Open Existing Wallet</button>
                 <button id="btnWelcomeRestore" class="btn" type="button" data-busy-disable data-tooltip="Recover a wallet using its seed phrase.">Restore from Backup</button>
               </div>
-              <div class="hint">Your wallets are stored locally. Passwords are never saved.</div>
+              <div class="hint" style="margin-top:20px; opacity:.7">Your wallets are stored locally. Passwords are never saved.</div>
             </div>
           </div>
 
@@ -172,9 +176,9 @@
               </div>
               <div id="history" class="history"></div>
               <div class="historyPager">
-                <button id="btnHistoryPrev" class="btn" type="button" data-busy-disable>Prev</button>
+                <button id="btnHistoryPrev" class="btn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">Prev</button>
                 <span id="historyPageLabel" class="pagerLabel">Page 1</span>
-                <button id="btnHistoryNext" class="btn" type="button" data-busy-disable>Next</button>
+                <button id="btnHistoryNext" class="btn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">Next</button>
               </div>
             </div>
           </div>

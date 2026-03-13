@@ -1,6 +1,7 @@
 {
   "extends": "./build/config/electron-builder.base.json",
   "win": {
+    "icon": "assets/icon.ico",
     "extraResources": [
       {
         "from": "build/vendor/simplewallet-win",
@@ -17,6 +18,9 @@
     ]
   },
   "nsis": {
+    "installerIcon": "assets/icon.ico",
+    "uninstallerIcon": "assets/icon.ico",
+    "installerHeaderIcon": "assets/icon.ico",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true
   }

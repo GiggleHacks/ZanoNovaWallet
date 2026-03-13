@@ -26,6 +26,12 @@ export async function suggestWalletPath(filename) {
   return window.zano.suggestNewWalletPath(paths.walletsDir + "/" + filename).catch(() => null);
 }
 
+/** Resolve default wallet path from app paths with normalized trimming. */
+export async function getDefaultWalletPath() {
+  const paths = await window.zano.getPaths().catch(() => null);
+  return paths?.walletPath ? String(paths.walletPath).trim() : "";
+}
+
 // ---------------------------------------------------------------------------
 // Overlay / history state
 // ---------------------------------------------------------------------------
@@ -124,8 +130,7 @@ export async function startWalletRpc(passwordOverride) {
 
   let walletFile = $("inputWalletFile")?.value?.trim() || "";
   if (!walletFile) {
-    const paths            = await window.zano.getPaths().catch(() => null);
-    const defaultWalletPath = paths?.walletPath ? String(paths.walletPath).trim() : "";
+    const defaultWalletPath = await getDefaultWalletPath();
     walletFile = (cfg.lastWalletPath || "").trim() || defaultWalletPath;
   }
 
@@ -296,6 +301,10 @@ export function updateHistoryPager(page, hasNext) {
   label.textContent = `Page ${page + 1}`;
   prev.disabled = page <= 0;
   next.disabled = !hasNext;
+  prev.tabIndex = prev.disabled ? -1 : 0;
+  next.tabIndex = next.disabled ? -1 : 0;
+  prev.setAttribute("aria-disabled", String(prev.disabled));
+  next.setAttribute("aria-disabled", String(next.disabled));
 }
 
 export function updateSendDialogBalances() {

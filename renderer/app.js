@@ -12,7 +12,7 @@ import {
   loadSettingsIntoDialog, saveSettingsFromDialog,
   resolveExePath, locateSimplewallet, refreshLocateButtonVis,
   showBaseAddress, renderReceiveQr,
-  updateSendDialogBalances, suggestWalletPath,
+  updateSendDialogBalances, suggestWalletPath, getDefaultWalletPath,
 } from "./lib/wallet.js";
 import { send } from "./lib/send.js";
 import { showSeedBackupForWallet, viewSeedPhraseFlow, handleConfirmViewSeed } from "./lib/seed.js";
@@ -496,8 +496,7 @@ async function init() {
   log.info("initializing");
   const cfg = await window.zano.configGet().catch(() => ({}));
   let lastWalletPath = String(cfg?.lastWalletPath || "").trim();
-  const paths            = await window.zano.getPaths().catch(() => null);
-  const defaultWalletPath = paths?.walletPath ? String(paths.walletPath).trim() : "";
+  const defaultWalletPath = await getDefaultWalletPath();
 
   $("unlockOverlay")?.classList.add("hidden");
 

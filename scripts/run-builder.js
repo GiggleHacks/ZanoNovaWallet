@@ -52,6 +52,14 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
+function ensureAppIcon() {
+  const scriptPath = join(process.cwd(), "scripts", "build-icon.js");
+  if (!existsSync(scriptPath)) {
+    throw new Error(`Icon build script not found: ${scriptPath}`);
+  }
+  run(process.execPath, [scriptPath]);
+}
+
 function parseCliArgs(argv) {
   const requestedPlatforms = new Set();
   const passthroughArgs = [];
@@ -206,6 +214,8 @@ function buildArgsForPlatform(platform, mode, passthroughArgs) {
 
     console.log("Build mode:", mode);
     console.log("Selected platforms:", platforms.join(", "));
+
+    ensureAppIcon();
 
     for (const platform of platforms) {
       const spec = getPlatformSpec(platform);

@@ -5,3 +5,4 @@ debug-*.log
 build/vendor/
 resources/*.dll
 resources/simplewallet.exe
+.claude

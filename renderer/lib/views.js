@@ -15,7 +15,16 @@ const NAV_KEYS  = ["wallet", "settings", "security"];
 export function switchView(which) {
   log.info("view →", which);
   for (const key of VIEW_KEYS) {
-    $(key + "View")?.classList.toggle("hidden", key !== which);
+    const el = $(key + "View");
+    if (!el) continue;
+    const wasHidden = el.classList.contains("hidden");
+    el.classList.toggle("hidden", key !== which);
+    // Re-trigger entrance animation when showing a view
+    if (key === which && wasHidden) {
+      el.style.animation = "none";
+      el.offsetHeight; // force reflow
+      el.style.animation = "";
+    }
   }
   for (const key of NAV_KEYS) {
     $("nav" + key.charAt(0).toUpperCase() + key.slice(1))?.classList.toggle("active", key === which);

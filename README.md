@@ -46,7 +46,7 @@ npm run dev
 
 ## App icon (Windows)
 
-The Windows .exe and installer use the Zano logo on a black background. The icon is built from `assets/logo.png`:
+The Windows .exe and installer use the Zano logo on a black background. The icon is built from `renderer/assets/zano-logo.png`:
 
 ```bash
 npm run build-icon
