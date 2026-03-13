@@ -6,7 +6,6 @@ const QRCode = require("qrcode");
 
 const {
   getUserDataPaths,
-  getResourcesDir,
   getConfig,
   setConfig,
   simplewalletBinaryName,
@@ -53,35 +52,6 @@ ipcMain.handle("wallet:suggestNewWalletPath", (_evt, walletPath) => {
   }
   return path.join(dir, base + "_new" + ext);
 });
-
-// ---------------------------------------------------------------------------
-// Sound files — return as Uint8Array so renderer can create blob URLs
-// ---------------------------------------------------------------------------
-
-const SOUND_FILES = Object.freeze({
-  receive: "zano__nova_recieved.mp3",
-  send: "zano_nova_send2.mp3",
-  startup: "zano_nova__startup.mp3",
-});
-
-function getSoundData(filename) {
-  const resourcesDir = getResourcesDir();
-  if (filename.includes("..") || path.isAbsolute(filename)) return null;
-  const filePath = path.join(resourcesDir, filename);
-  const resolved = path.resolve(filePath);
-  const resolvedDir = path.resolve(resourcesDir);
-  if (!resolved.startsWith(resolvedDir) || !fs.existsSync(filePath)) return null;
-  try {
-    return new Uint8Array(fs.readFileSync(filePath));
-  } catch {
-    return null;
-  }
-}
-
-ipcMain.handle("app:getSoundData", (_evt, filename) => getSoundData(filename));
-ipcMain.handle("app:getReceivedSoundUrl", () => getSoundData(SOUND_FILES.receive));
-ipcMain.handle("app:getSendSoundUrl", () => getSoundData(SOUND_FILES.send));
-ipcMain.handle("app:getStartupSoundUrl", () => getSoundData(SOUND_FILES.startup));
 
 // ---------------------------------------------------------------------------
 // Config

@@ -7,17 +7,6 @@
     "assets/**",
     "package.json"
   ],
-  "extraResources": [
-    {
-      "from": "resources",
-      "to": "resources",
-      "filter": [
-        "**/*",
-        "!**/*.dll",
-        "!simplewallet.exe"
-      ]
-    }
-  ],
   "directories": {
     "buildResources": "assets",
     "output": "dist"

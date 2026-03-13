@@ -89,6 +89,8 @@ function simplewalletSourceRoots(overridePath) {
       roots.push(path.join(projectRoot, "build", "vendor", "zano-macos", "Contents"));
     } else if (process.platform === "win32") {
       roots.push(path.join(projectRoot, "build", "vendor", "simplewallet-win"));
+    } else {
+      roots.push(path.join(projectRoot, "build", "vendor", "simplewallet-linux"));
     }
   }
 

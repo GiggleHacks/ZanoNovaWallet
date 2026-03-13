@@ -15,7 +15,7 @@
           </div>
           <div>
             <div class="title">Zano Nova</div>
-            <div class="subtitle">Zano Without the Blockchain Wait.</div>
+            <div class="subtitle">Zano Without the Blockchain Wait</div>
           </div>
         </div>
         <div class="status">
@@ -42,9 +42,9 @@
             <div class="card welcomeCard">
               <h2>Create or open the wallet to start using Zano</h2>
               <div class="stack">
-                <button id="btnWelcomeCreate" class="btn primary" type="button" data-tooltip="Set up a brand-new wallet on this device.">Create New Wallet</button>
-                <button id="btnWelcomeOpen" class="btn alt" type="button" data-tooltip="Choose an existing wallet file from your disk.">Open Existing Wallet</button>
-                <button id="btnWelcomeRestore" class="btn" type="button" data-tooltip="Recover a wallet using its seed phrase.">Restore from Backup</button>
+                <button id="btnWelcomeCreate" class="btn primary" type="button" data-busy-disable data-tooltip="Set up a brand-new wallet on this device.">Create New Wallet</button>
+                <button id="btnWelcomeOpen" class="btn alt" type="button" data-busy-disable data-tooltip="Choose an existing wallet file from your disk.">Open Existing Wallet</button>
+                <button id="btnWelcomeRestore" class="btn" type="button" data-busy-disable data-tooltip="Recover a wallet using its seed phrase.">Restore from Backup</button>
               </div>
               <div class="hint">Your wallets are stored locally. Passwords are never saved.</div>
             </div>
@@ -72,12 +72,12 @@
                 </label>
               </div>
               <div class="row">
-                <button id="btnSelectWalletLocation" class="btn" type="button" data-tooltip="Choose where the new wallet file will be saved.">Select Wallet Location</button>
+                <button id="btnSelectWalletLocation" class="btn" type="button" data-busy-disable data-tooltip="Choose where the new wallet file will be saved.">Select Wallet Location</button>
                 <div class="hint" id="addWalletPathHint">No file selected.</div>
               </div>
               <div class="row">
-                <button id="btnCreateWalletWizard" class="btn primary" type="button" data-tooltip="Create a new wallet with this name and password.">Create Wallet</button>
-                <button id="btnCancelAddWallet" class="btn" type="button" data-tooltip="Go back without creating a new wallet.">Cancel</button>
+                <button id="btnCreateWalletWizard" class="btn primary" type="button" data-busy-disable data-tooltip="Create a new wallet with this name and password.">Create Wallet</button>
+                <button id="btnCancelAddWallet" class="btn" type="button" data-busy-disable data-tooltip="Go back without creating a new wallet.">Cancel</button>
               </div>
               <pre class="log" id="addWalletLog"></pre>
             </div>
@@ -117,12 +117,12 @@
                 </label>
               </div>
               <div class="row">
-                <button id="btnSelectRestoreLocation" class="btn" type="button" data-tooltip="Choose where the restored wallet file will be saved.">Select Wallet Location</button>
+                <button id="btnSelectRestoreLocation" class="btn" type="button" data-busy-disable data-tooltip="Choose where the restored wallet file will be saved.">Select Wallet Location</button>
                 <div class="hint" id="restoreWalletPathHint">No file selected.</div>
               </div>
               <div class="row">
-                <button id="btnRestoreWalletWizard" class="btn primary" type="button" data-tooltip="Recreate a wallet using this seed phrase and password.">Restore Wallet</button>
-                <button id="btnCancelRestoreWallet" class="btn" type="button" data-tooltip="Go back without restoring a wallet.">Cancel</button>
+                <button id="btnRestoreWalletWizard" class="btn primary" type="button" data-busy-disable data-tooltip="Recreate a wallet using this seed phrase and password.">Restore Wallet</button>
+                <button id="btnCancelRestoreWallet" class="btn" type="button" data-busy-disable data-tooltip="Go back without restoring a wallet.">Cancel</button>
               </div>
               <pre class="log" id="restoreWalletLog"></pre>
             </div>
@@ -151,11 +151,11 @@
             <div class="card balanceCard">
               <div class="balanceBlock">
                 <div class="kicker">Balance</div>
-                <div id="zanoBalance" class="bigBalance">—</div>
+                <div id="zanoBalance" class="bigBalance">...</div>
                 <div id="zanoBalanceSub" class="balanceSub">Unlocked: —</div>
               </div>
               <div class="row balanceActions">
-                <button id="btnOpenSend" class="btn alt" type="button">Send</button>
+                <button id="btnOpenSend" class="btn alt" type="button" data-busy-disable>Send</button>
                 <button id="btnOpenReceive" class="btn primary" type="button">Receive</button>
               </div>
             </div>
@@ -167,14 +167,14 @@
                   <div class="hint">Recent transfers (pending &lt; 10 confirmations).</div>
                 </div>
                 <div class="row">
-                  <button id="btnRefreshHistory" class="btn" type="button">Refresh</button>
+                  <button id="btnRefreshHistory" class="btn" type="button" data-busy-disable>Refresh</button>
                 </div>
               </div>
               <div id="history" class="history"></div>
               <div class="historyPager">
-                <button id="btnHistoryPrev" class="btn" type="button">Prev</button>
+                <button id="btnHistoryPrev" class="btn" type="button" data-busy-disable>Prev</button>
                 <span id="historyPageLabel" class="pagerLabel">Page 1</span>
-                <button id="btnHistoryNext" class="btn" type="button">Next</button>
+                <button id="btnHistoryNext" class="btn" type="button" data-busy-disable>Next</button>
               </div>
             </div>
           </div>
@@ -186,7 +186,7 @@
                 <div class="hint">Create, open, or restore a wallet file.</div>
                 <div class="row" style="margin-top:10px">
                   <button id="btnAddWallet" class="btn primary" type="button" data-tooltip="Launch the wizard to create a new wallet.">Create new wallet…</button>
-                  <button id="btnLoadWallet" class="btn alt" type="button" data-tooltip="Open a wallet file that already exists on disk.">Open existing…</button>
+                  <button id="btnLoadWallet" class="btn alt" type="button" data-busy-disable data-tooltip="Open a wallet file that already exists on disk.">Open existing…</button>
                   <button id="btnOpenRestoreWizard" class="btn" type="button" data-tooltip="Restore a wallet from a saved seed phrase.">Restore from backup…</button>
                 </div>
               </section>
@@ -269,15 +269,15 @@
           <label class="field">
             <span>Daemon address</span>
             <div class="inline">
-              <input id="cfgDaemon" type="text" placeholder="37.27.100.59:10500" />
+              <input id="cfgDaemon" type="text" />
               <button id="btnCopyDaemon" class="btn" type="button">Copy</button>
             </div>
           </label>
           <label class="field">
             <span>Wallet RPC bind</span>
             <div class="inline">
-              <input id="cfgBindIp" type="text" placeholder="127.0.0.1" />
-              <input id="cfgBindPort" type="number" placeholder="12233" />
+              <input id="cfgBindIp" type="text" />
+              <input id="cfgBindPort" type="number" />
             </div>
           </label>
           <label class="field">
@@ -289,7 +289,7 @@
           </label>
           <div class="row">
             <button class="btn" value="cancel">Close</button>
-            <button id="btnSaveSettings" class="btn primary" value="default">Save</button>
+              <button id="btnSaveSettings" class="btn primary" value="default" data-busy-disable>Save</button>
           </div>
         </form>
       </dialog>
@@ -311,14 +311,14 @@
             <div class="addressRow">
               <!-- Use step=\"any\" to avoid browser validation popups; JS still clamps to 0.1 increments and max spendable. -->
               <input id="sendAmount" type="number" min="0" step="any" placeholder="0.00" data-tooltip="How much ZANO to send from this wallet." />
-              <button id="btnSendMax" class="btn" type="button" data-tooltip="Fill in the maximum spendable amount after fees.">Max</button>
+              <button id="btnSendMax" class="btn" type="button" data-busy-disable data-tooltip="Fill in the maximum spendable amount after fees.">Max</button>
             </div>
           </label>
           <div class="hint">Fee is 0.01 ZANO and is burned.</div>
           <pre class="log" id="sendLog"></pre>
           <div class="row">
             <button class="btn" value="cancel" data-tooltip="Close the send window without sending.">Close</button>
-            <button id="btnSend" class="btn primary" type="button" data-tooltip="Submit this transaction to the network.">Send</button>
+            <button id="btnSend" class="btn primary" type="button" data-busy-disable data-tooltip="Submit this transaction to the network.">Send</button>
           </div>
         </form>
       </dialog>
@@ -372,7 +372,45 @@
       </dialog>
     </div>
 
-    <script src="./app.js"></script>
+    <!-- ── Card templates (populated by wallet.js, no inline HTML in JS) ── -->
+    <template id="tmplAssetCard">
+      <div class="asset">
+        <div class="assetHeader">
+          <div>
+            <div class="assetName"></div>
+            <div class="assetMeta"></div>
+          </div>
+        </div>
+        <div class="assetNums">
+          <div class="kv"><div class="k">Unlocked</div><div class="v"></div></div>
+          <div class="kv"><div class="k">Total</div><div class="v"></div></div>
+          <div class="kv"><div class="k">Awaiting in</div><div class="v"></div></div>
+          <div class="kv"><div class="k">Awaiting out</div><div class="v"></div></div>
+        </div>
+      </div>
+    </template>
+
+    <template id="tmplTxCard">
+      <div class="tx">
+        <div class="txTop">
+          <div class="txMain">
+            <div class="txDir"></div>
+            <div>
+              <div class="txAmount"></div>
+              <div class="txMeta"></div>
+            </div>
+          </div>
+          <div class="txConfWrap">
+            <div class="confCircle"></div>
+            <div class="confLabel"></div>
+          </div>
+        </div>
+        <div class="hint txHint"></div>
+        <div class="hash"></div>
+      </div>
+    </template>
+
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
 

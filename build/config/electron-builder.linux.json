@@ -1,5 +1,16 @@
 {
   "extends": "./electron-builder.base.json",
+  "extraResources": [
+    {
+      "from": "build/vendor/simplewallet-linux",
+      "to": "resources",
+      "filter": [
+        "simplewallet",
+        "*.so",
+        "*.so.*"
+      ]
+    }
+  ],
   "linux": {
     "target": [
       "AppImage",
