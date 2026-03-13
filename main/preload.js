@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("zano", {
   getPaths: () => ipcRenderer.invoke("app:getPaths"),
   getReceivedSoundUrl: () => ipcRenderer.invoke("app:getReceivedSoundUrl"),
   getSendSoundUrl: () => ipcRenderer.invoke("app:getSendSoundUrl"),
+  getStartupSoundUrl: () => ipcRenderer.invoke("app:getStartupSoundUrl"),
 
   configGet: () => ipcRenderer.invoke("config:get"),
   configSet: (partial) => ipcRenderer.invoke("config:set", partial),

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, protocol } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { pathToFileURL } = require("url");
@@ -15,6 +15,17 @@ const DEFAULTS = Object.freeze({
   tooltipsEnabled: true,
   simplewalletExePath: "",
 });
+
+// Custom protocol so the renderer can load sounds (and other resources) without file:// cross-origin blocking.
+protocol.registerSchemesAsPrivileged([
+  { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
+
+function getResourcesDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "resources")
+    : path.join(app.getAppPath(), "resources");
+}
 
 function getUserDataPaths() {
   const userData = app.getPath("userData");
@@ -91,19 +102,43 @@ let simplewalletProc = null;
 let simplewalletState = { status: "stopped" };
 
 function simplewalletExeCandidates() {
-  // For development: place binary at resources/simplewallet.exe
-  // For packaged app: shipped under resources/resources/simplewallet.exe (see build.files + resources/)
+  // First: same folder as the app exe (portable or installed — simplewallet.exe next to Zano Nova.exe).
   const candidates = [];
-  const devCandidate = path.join(app.getAppPath(), "resources", "simplewallet.exe");
-  candidates.push(devCandidate);
-  const packagedCandidate = path.join(process.resourcesPath, "resources", "simplewallet.exe");
-  candidates.push(packagedCandidate);
+  try {
+    const appExeDir = path.dirname(app.getPath("exe"));
+    candidates.push(path.join(appExeDir, "simplewallet.exe"));
+  } catch (_) {}
+  // Packaged: extraResources resources/simplewallet.exe (portable + installer)
+  candidates.push(path.join(process.resourcesPath, "resources", "simplewallet.exe"));
+  // Development: project resources/simplewallet.exe
+  candidates.push(path.join(app.getAppPath(), "resources", "simplewallet.exe"));
   return candidates;
 }
 
 function resolveSimplewalletExePath(overridePath) {
+  // #region agent log
+  const candidates = simplewalletExeCandidates();
+  const payload = {
+    sessionId: "06be5c",
+    location: "main.js:resolveSimplewalletExePath",
+    message: "resolveSimplewalletExePath",
+    data: {
+      overridePath: overridePath || null,
+      processResourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      candidates: candidates,
+      hypothesisId: "H2",
+    },
+    timestamp: Date.now(),
+  };
+  fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06be5c" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+  // #endregion
   if (overridePath && fs.existsSync(overridePath)) return overridePath;
-  for (const p of simplewalletExeCandidates()) {
+  for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
   return null;
@@ -141,9 +176,13 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
 
   setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null });
 
+  const exeDir = path.dirname(simplewalletExePath);
+  const spawnEnv = { ...process.env, PATH: exeDir + path.delimiter + (process.env.PATH || "") };
   simplewalletProc = spawn(simplewalletExePath, args, {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
+    cwd: exeDir,
+    env: spawnEnv,
   });
 
   let stdout = "";
@@ -260,6 +299,32 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  const resourcesDir = getResourcesDir();
+  protocol.handle("app", (request) => {
+    let filename;
+    try {
+      const u = new URL(request.url);
+      const match = /^\/resources\/(.+)$/.exec(u.pathname);
+      if (!match) return new Response("Not Found", { status: 404 });
+      filename = match[1].replace(/\?.*$/, "");
+    } catch {
+      return new Response("Bad Request", { status: 400 });
+    }
+    if (filename.includes("..") || path.isAbsolute(filename)) return new Response("Forbidden", { status: 403 });
+    const filePath = path.join(resourcesDir, filename);
+    const resolved = path.resolve(filePath);
+    const resolvedDir = path.resolve(resourcesDir);
+    if (!resolved.startsWith(resolvedDir) || !fs.existsSync(filePath)) return new Response("Not Found", { status: 404 });
+    try {
+      const buf = fs.readFileSync(filePath);
+      return new Response(buf, {
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    } catch (err) {
+      return new Response("Error reading file", { status: 500 });
+    }
+  });
+
   // Do not auto-migrate or auto-create a default wallet file.
   createMainWindow();
 
@@ -307,15 +372,29 @@ ipcMain.handle("wallet:suggestNewWalletPath", (evt, walletPath) => {
   return path.join(dir, base + "_new" + ext);
 });
 
-// File URLs for sounds so the renderer can play them in both dev and packaged app.
-function getResourceSoundUrl(filename) {
-  const dir = app.isPackaged
-    ? path.join(process.resourcesPath, "resources")
-    : path.join(app.getAppPath(), "resources");
-  return pathToFileURL(path.join(dir, filename)).href;
+// Return sound file as Uint8Array so renderer can create a same-origin blob URL (reliable on all machines).
+const SOUND_FILES = Object.freeze({
+  receive: "zano__nova_recieved.mp3",
+  send: "zano_nova_send2.mp3",
+  startup: "zano_nova__startup.mp3",
+});
+function getSoundData(filename) {
+  const resourcesDir = getResourcesDir();
+  if (filename.includes("..") || path.isAbsolute(filename)) return null;
+  const filePath = path.join(resourcesDir, filename);
+  const resolved = path.resolve(filePath);
+  const resolvedDir = path.resolve(resourcesDir);
+  if (!resolved.startsWith(resolvedDir) || !fs.existsSync(filePath)) return null;
+  try {
+    return new Uint8Array(fs.readFileSync(filePath));
+  } catch {
+    return null;
+  }
 }
-ipcMain.handle("app:getReceivedSoundUrl", () => getResourceSoundUrl("zano__nova_recieved.mp3"));
-ipcMain.handle("app:getSendSoundUrl", () => getResourceSoundUrl("zano_nova_send2.mp3"));
+ipcMain.handle("app:getSoundData", (evt, filename) => getSoundData(filename));
+ipcMain.handle("app:getReceivedSoundUrl", () => getSoundData(SOUND_FILES.receive));
+ipcMain.handle("app:getSendSoundUrl", () => getSoundData(SOUND_FILES.send));
+ipcMain.handle("app:getStartupSoundUrl", () => getSoundData(SOUND_FILES.startup));
 
 ipcMain.handle("config:get", () => getConfig());
 ipcMain.handle("config:set", (evt, partial) => setConfig(partial || {}));
@@ -348,6 +427,9 @@ ipcMain.handle("simplewallet:start", async (evt, input) => {
   }
 
   const simplewalletExePath = resolveSimplewalletExePath(overrideExe);
+  if (!simplewalletExePath) {
+    throw new Error("simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
+  }
   startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort });
   const ready = await waitForWalletRpcReady({ rpcBindIp, rpcBindPort }).catch((e) => {
     // ensure state shows stopped if it died quickly
@@ -379,13 +461,43 @@ ipcMain.handle("wallet:generate", async (evt, input) => {
 
   const simplewalletExePath = resolveSimplewalletExePath(overrideExe);
   if (!simplewalletExePath) {
-    throw new Error("simplewallet.exe not found. Place it at resources/simplewallet.exe or set a custom path in Settings.");
+    throw new Error("simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
   }
 
   fs.mkdirSync(walletsDir, { recursive: true });
 
+  // #region agent log
+  const exeDir = path.dirname(simplewalletExePath);
+  let filesInExeDir = [];
+  try {
+    filesInExeDir = fs.readdirSync(exeDir);
+  } catch (e) {
+    filesInExeDir = ["readdirError:" + (e && e.message)];
+  }
+  const spawnEnv = { ...process.env, PATH: exeDir + path.delimiter + (process.env.PATH || "") };
+  const spawnOpts = { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], cwd: exeDir, env: spawnEnv };
+  fetch("http://127.0.0.1:7377/ingest/2e5b39fe-7a23-4b57-b6c0-2440cb15aa66", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "06be5c" },
+    body: JSON.stringify({
+      sessionId: "06be5c",
+      location: "main.js:wallet:generate",
+      message: "wallet:generate spawn",
+      data: {
+        simplewalletExePath,
+        exeDir,
+        hasCwd: true,
+        hasPathInEnv: true,
+        filesInExeDir,
+        hypothesisId: "H1,H2",
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+
   const args = [`--generate-new-wallet=${walletFile}`];
-  const proc = spawn(simplewalletExePath, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const proc = spawn(simplewalletExePath, args, spawnOpts);
 
   // simplewallet prompts for password twice on stdin.
   proc.stdin.write(`${password}\n`);
@@ -404,7 +516,28 @@ ipcMain.handle("wallet:generate", async (evt, input) => {
       if (combined.includes("your wallet has been generated") || combined.includes("generated new wallet")) {
         return resolve({ stdout, stderr });
       }
-      reject(new Error(`Wallet generation failed (exit ${code}). ${stderr || stdout}`));
+      // #region agent log
+      let debugPathWritten = null;
+      if (code === 3221225781) {
+        try {
+          const { userData } = getUserDataPaths();
+          debugPathWritten = path.join(userData, "debug-wallet-generate-dll.txt");
+          fs.writeFileSync(
+            debugPathWritten,
+            `exitCode: ${code} (0xC0000135 DLL_NOT_FOUND)\nexeDir: ${exeDir}\nfilesInExeDir: ${JSON.stringify(filesInExeDir)}`,
+            "utf8"
+          );
+        } catch (_) {}
+      }
+      // #endregion
+      const dllHint =
+        code === 3221225781
+          ? " The folder containing simplewallet.exe is missing required .dll files. Copy simplewallet.exe and all .dll files from a Zano installation into that folder and try again, or use Settings → Wallet → Locate simplewallet.exe to point to a folder that has both."
+          : "";
+      const errMsg = debugPathWritten
+        ? `Wallet generation failed (exit ${code}).${dllHint} Debug file: ${debugPathWritten}`
+        : `Wallet generation failed (exit ${code}).${dllHint} ${stderr || stdout}`;
+      reject(new Error(errMsg));
     });
   });
 
@@ -428,13 +561,15 @@ ipcMain.handle("wallet:restore", async (evt, input) => {
 
   const simplewalletExePath = resolveSimplewalletExePath(overrideExe);
   if (!simplewalletExePath) {
-    throw new Error("simplewallet.exe not found. Place it at resources/simplewallet.exe or set a custom path in Settings.");
+    throw new Error("simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
   }
 
   fs.mkdirSync(walletsDir, { recursive: true });
 
+  const exeDir = path.dirname(simplewalletExePath);
+  const spawnEnv = { ...process.env, PATH: exeDir + path.delimiter + (process.env.PATH || "") };
   const args = [`--restore-wallet=${walletFile}`, `--daemon-address=${daemonAddress}`];
-  const proc = spawn(simplewalletExePath, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const proc = spawn(simplewalletExePath, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], cwd: exeDir, env: spawnEnv });
 
   // Prompts vary by version; we feed the common sequence:
   // - new wallet password (+ confirm)
@@ -467,7 +602,7 @@ ipcMain.handle("wallet:showSeed", async (evt, input) => {
   const walletFile = input?.walletFile;
   const password = input?.password;
   const seedProtectionPassword = input?.seedProtectionPassword ?? "";
-  const overrideExe = input?.simplewalletExePath;
+  const overrideExe = (input?.simplewalletExePath || "").trim();
   const daemonAddress = input?.daemonAddress || cfg.daemonAddress;
 
   if (!walletFile) throw new Error("Missing walletFile");
@@ -475,9 +610,11 @@ ipcMain.handle("wallet:showSeed", async (evt, input) => {
 
   const simplewalletExePath = resolveSimplewalletExePath(overrideExe);
   if (!simplewalletExePath) {
-    throw new Error("simplewallet.exe not found. Place it at resources/simplewallet.exe or set a custom path in Settings.");
+    throw new Error("simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
   }
 
+  const exeDir = path.dirname(simplewalletExePath);
+  const spawnEnv = { ...process.env, PATH: exeDir + path.delimiter + (process.env.PATH || "") };
   const args = [
     `--wallet-file=${walletFile}`,
     `--password=${password}`,
@@ -485,7 +622,7 @@ ipcMain.handle("wallet:showSeed", async (evt, input) => {
     `--no-refresh`,
     `--command=show_seed`,
   ];
-  const proc = spawn(simplewalletExePath, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const proc = spawn(simplewalletExePath, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], cwd: exeDir, env: spawnEnv });
 
   // show_seed asks:
   // - confirm operation password (wallet password)

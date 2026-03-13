@@ -76,7 +76,7 @@
                 <div class="hint" id="addWalletPathHint">No file selected.</div>
               </div>
               <div class="row">
-                <button id="btnCreateWalletWizard" class="btn primary hidden" type="button" disabled data-tooltip="Create a new wallet with this name and password.">Create Wallet</button>
+                <button id="btnCreateWalletWizard" class="btn primary" type="button" data-tooltip="Create a new wallet with this name and password.">Create Wallet</button>
                 <button id="btnCancelAddWallet" class="btn" type="button" data-tooltip="Go back without creating a new wallet.">Cancel</button>
               </div>
               <pre class="log" id="addWalletLog"></pre>
@@ -143,6 +143,7 @@
               <div class="row">
                 <button id="btnSeedBackupContinue" class="btn primary" type="button" disabled>Continue</button>
               </div>
+              <div class="hint" id="seedBackupStatus"></div>
             </div>
           </div>
 
@@ -208,7 +209,10 @@
                     </label>
                   </label>
                 </div>
-                <div class="hint" id="hintPaths"></div>
+                <div class="hint" style="margin-top:10px">
+                  <span>Current wallet: </span>
+                  <span id="currentWalletPathDisplay" class="mono">—</span>
+                </div>
               </section>
 
               <section class="card wide">

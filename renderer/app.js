@@ -31,6 +31,7 @@ let sendAudio = null;
 let receiveAudio = null;
 let sendSoundUrl = null;
 let receiveSoundUrl = null;
+let startupSoundUrl = null;
 let soundsPrewarmed = false;
 
 function setUiBusy(busy, reason = "") {
@@ -75,13 +76,24 @@ function isSoundEnabled() {
   return soundEnabled;
 }
 
-function playStartupSoundOnce() {
+function toSoundUrl(dataOrUrl) {
+  if (dataOrUrl == null) return null;
+  if (typeof dataOrUrl === "string") return dataOrUrl;
+  const blob = new Blob([dataOrUrl], { type: "audio/mpeg" });
+  return URL.createObjectURL(blob);
+}
+
+async function playStartupSoundOnce() {
   if (!isSoundEnabled()) return;
   if (startupSoundPlayed) return;
   startupSoundPlayed = true;
   try {
+    if (!startupSoundUrl) {
+      const data = await window.zano.getStartupSoundUrl?.().catch(() => null);
+      startupSoundUrl = toSoundUrl(data) || "../resources/zano_nova__startup.mp3";
+    }
     if (!startupAudio) {
-      startupAudio = new Audio("../resources/zano_nova__startup.mp3");
+      startupAudio = new Audio(startupSoundUrl);
       startupAudio.preload = "auto";
     }
     startupAudio.pause();
@@ -97,8 +109,8 @@ async function playSendSound() {
   if (!isSoundEnabled()) return;
   try {
     if (!sendSoundUrl) {
-      const url = await window.zano.getSendSoundUrl?.().catch(() => null);
-      sendSoundUrl = url || "../resources/zano_nova_send2.mp3";
+      const data = await window.zano.getSendSoundUrl?.().catch(() => null);
+      sendSoundUrl = toSoundUrl(data) || "../resources/zano_nova_send2.mp3";
     }
     if (!sendAudio) {
       sendAudio = new Audio(sendSoundUrl);
@@ -151,8 +163,8 @@ async function playReceiveSound() {
   if (!isSoundEnabled()) return;
   try {
     if (!receiveSoundUrl) {
-      const url = await window.zano.getReceivedSoundUrl?.().catch(() => null);
-      receiveSoundUrl = url || "../resources/zano__nova_recieved.mp3";
+      const data = await window.zano.getReceivedSoundUrl?.().catch(() => null);
+      receiveSoundUrl = toSoundUrl(data) || "../resources/zano__nova_recieved.mp3";
     }
     if (!receiveAudio) {
       receiveAudio = new Audio(receiveSoundUrl);
@@ -171,12 +183,12 @@ async function prewarmSoundsIfNeeded() {
   if (soundsPrewarmed || !isSoundEnabled()) return;
   soundsPrewarmed = true;
   try {
-    const [sendUrl, recvUrl] = await Promise.all([
+    const [sendData, recvData] = await Promise.all([
       window.zano.getSendSoundUrl?.().catch(() => null),
       window.zano.getReceivedSoundUrl?.().catch(() => null),
     ]);
-    sendSoundUrl = sendUrl || "../resources/zano_nova_send2.mp3";
-    receiveSoundUrl = recvUrl || "../resources/zano__nova_recieved.mp3";
+    sendSoundUrl = toSoundUrl(sendData) || "../resources/zano_nova_send2.mp3";
+    receiveSoundUrl = toSoundUrl(recvData) || "../resources/zano__nova_recieved.mp3";
 
     sendAudio = new Audio(sendSoundUrl);
     sendAudio.preload = "auto";
@@ -337,9 +349,24 @@ function zanoToAtomic(zanoStr) {
 }
 
 async function loadDefaults() {
-  const paths = await window.zano.getPaths();
-  setText($("hintPaths"), `Default folder: ${paths.walletsDir}`);
   // Don't auto-fill a default wallet file; the user will create/open/restore explicitly.
+}
+
+async function updateCurrentWalletPathDisplay() {
+  const el = $("currentWalletPathDisplay");
+  if (!el) return;
+  const path = (currentWalletFile || "").trim();
+  if (path) {
+    el.textContent = path;
+  } else {
+    try {
+      const cfg = await window.zano.configGet();
+      const last = (cfg?.lastWalletPath || "").trim();
+      el.textContent = last || "—";
+    } catch {
+      el.textContent = "—";
+    }
+  }
 }
 
 async function loadSettingsIntoDialog() {
@@ -827,11 +854,6 @@ function wireUi() {
     $("addWalletPassword2").value = "";
     $("addWalletPathHint").textContent = "No file selected.";
     selectedCreatePath = null;
-    const btnCreate = $("btnCreateWalletWizard");
-    if (btnCreate) {
-      btnCreate.classList.add("hidden");
-      btnCreate.disabled = true;
-    }
     switchView("addWallet");
   });
 
@@ -861,11 +883,6 @@ function wireUi() {
 
   $("btnCancelAddWallet")?.addEventListener("click", () => {
     selectedCreatePath = null;
-    const btnCreate = $("btnCreateWalletWizard");
-    if (btnCreate) {
-      btnCreate.classList.add("hidden");
-      btnCreate.disabled = true;
-    }
     switchView("welcome");
   });
   $("btnCancelRestoreWallet")?.addEventListener("click", () => {
@@ -889,17 +906,37 @@ function wireUi() {
     }
   });
   $("btnSeedBackupContinue")?.addEventListener("click", async () => {
-    const walletFile = $("inputWalletFile")?.value?.trim() || "";
-    if (!walletFile) return;
+    const cfg = await window.zano.configGet().catch(() => ({}));
+    const walletFile = (currentWalletFile || "").trim() || (cfg?.lastWalletPath || "").trim() || "";
+    if (!walletFile) {
+      const statusEl = $("seedBackupStatus");
+      if (statusEl) statusEl.textContent = "Wallet path not set. Please create the wallet again.";
+      return;
+    }
     const password = sessionPassword;
-    if (!password) return;
+    if (!password) {
+      const statusEl = $("seedBackupStatus");
+      if (statusEl) statusEl.textContent = "Session password missing. Please create the wallet again.";
+      return;
+    }
 
-    const walletInput = $("inputWalletFile");
-    if (walletInput) walletInput.value = walletFile;
-    await startWalletRpc(password).catch(() => {});
-    await refreshBalance().catch(() => {});
-    await refreshHistory(0).catch(() => {});
-    switchView("wallet");
+    setUiBusy(true, "Starting backend…");
+    try {
+      await startWalletRpc(password);
+      await refreshBalance().catch(() => {});
+      await refreshHistory(0).catch(() => {});
+      const statusEl = $("seedBackupStatus");
+      if (statusEl) {
+        statusEl.textContent = "You've successfully created your wallet. The backend is syncing with the network — you can use your wallet now.";
+      }
+      switchView("wallet");
+    } catch (e) {
+      const msg = e?.message || String(e);
+      const statusEl = $("seedBackupStatus");
+      if (statusEl) statusEl.textContent = "Backend failed to start: " + msg;
+    } finally {
+      setUiBusy(false);
+    }
   });
 
   let selectedCreatePath = null;
@@ -908,11 +945,6 @@ function wireUi() {
     if (!p) return;
     selectedCreatePath = p;
     $("addWalletPathHint").textContent = p;
-    const btnCreate = $("btnCreateWalletWizard");
-    if (btnCreate) {
-      btnCreate.classList.remove("hidden");
-      btnCreate.disabled = false;
-    }
   });
 
   let selectedRestorePath = null;
@@ -933,10 +965,8 @@ function wireUi() {
     if (!password) return appendLog(logEl, "Enter a wallet password.");
     if (password !== password2) return appendLog(logEl, "Passwords do not match.");
     if (!selectedCreatePath) {
-      const p = await window.zano.saveWalletDialog().catch(() => null);
-      if (!p) return appendLog(logEl, "Select wallet location first.");
-      selectedCreatePath = p;
-      $("addWalletPathHint").textContent = p;
+      appendLog(logEl, "Select wallet location first.");
+      return;
     }
 
     setUiBusy(true, "Creating wallet…");
@@ -944,7 +974,10 @@ function wireUi() {
       const cfg = await window.zano.configGet();
       const resolved = await resolveExePath();
       appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
-      if (!resolved.resolved) return appendLog(logEl, "Put simplewallet.exe at resources/simplewallet.exe, or locate it in Settings.");
+      if (!resolved.resolved) {
+        setUiBusy(false);
+        return appendLog(logEl, "simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
+      }
 
       let walletFile = await window.zano.suggestNewWalletPath(selectedCreatePath);
       if (walletFile !== selectedCreatePath) {
@@ -991,7 +1024,10 @@ function wireUi() {
       const cfg = await window.zano.configGet();
       const resolved = await resolveExePath();
       appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
-      if (!resolved.resolved) return appendLog(logEl, "Put simplewallet.exe at resources/simplewallet.exe, or locate it in Settings.");
+      if (!resolved.resolved) {
+        setUiBusy(false);
+        return appendLog(logEl, "simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
+      }
 
     let walletFile = await window.zano.suggestNewWalletPath(selectedRestorePath);
     if (walletFile !== selectedRestorePath) {
@@ -1365,6 +1401,7 @@ function switchView(which) {
   navWallet.classList.toggle("active", isWallet);
   navSettings.classList.toggle("active", isSettings);
   navSecurity.classList.toggle("active", isSecurity);
+  if (isSettings) updateCurrentWalletPathDisplay();
 }
 
 function extractSeedWords(stdoutText) {
