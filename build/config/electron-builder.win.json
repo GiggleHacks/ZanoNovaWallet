@@ -1,0 +1,23 @@
+{
+  "extends": "./electron-builder.base.json",
+  "win": {
+    "extraResources": [
+      {
+        "from": "build/vendor/simplewallet-win",
+        "to": "resources",
+        "filter": [
+          "simplewallet.exe",
+          "*.dll"
+        ]
+      }
+    ],
+    "target": [
+      "nsis",
+      "portable"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  }
+}

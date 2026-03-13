@@ -1,0 +1,25 @@
+{
+  "appId": "org.zano.simplewallet.light",
+  "productName": "Zano Nova",
+  "files": [
+    "main/**",
+    "renderer/**",
+    "assets/**",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources",
+      "to": "resources",
+      "filter": [
+        "**/*",
+        "!**/*.dll",
+        "!simplewallet.exe"
+      ]
+    }
+  ],
+  "directories": {
+    "buildResources": "assets",
+    "output": "dist"
+  }
+}

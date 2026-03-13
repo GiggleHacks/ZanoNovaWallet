@@ -218,7 +218,7 @@
               <section class="card wide">
                 <h2>Log</h2>
                 <div class="row" style="margin-top:8px">
-                  <button id="btnLocateSimplewallet" class="btn" type="button" data-tooltip="Find and save the location of simplewallet.exe.">Locate simplewallet.exe…</button>
+                  <button id="btnLocateSimplewallet" class="btn" type="button" data-tooltip="Choose a simplewallet binary so the app can copy it into its own data directory.">Locate simplewallet…</button>
                   <button id="btnOpenSettings" class="btn" type="button" data-tooltip="Change which node (daemon) this wallet connects to.">Daemon/RPC settings</button>
                   <button id="btnStartWallet" class="btn alt" type="button" data-tooltip="Start the wallet backend process manually.">Start backend (manual)</button>
                   <button id="btnStopWallet" class="btn danger" type="button" data-tooltip="Stop the running wallet backend process.">Stop backend</button>
@@ -281,9 +281,9 @@
             </div>
           </label>
           <label class="field">
-            <span>simplewallet.exe path (optional)</span>
+            <span>simplewallet path (optional source)</span>
             <div class="inline">
-              <input id="cfgExe" type="text" placeholder="resources\\simplewallet.exe" />
+              <input id="cfgExe" type="text" placeholder="/path/to/simplewallet" />
               <button id="btnBrowseExe" class="btn" type="button">Browse…</button>
             </div>
           </label>

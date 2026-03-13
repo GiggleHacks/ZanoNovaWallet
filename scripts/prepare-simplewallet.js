@@ -1,14 +1,16 @@
 /**
- * Downloads the latest Zano Windows build ZIP, extracts simplewallet.exe and
- * all required .dll files into resources/, so the packaged app works without
- * user setup. Run automatically before `npm run dist`, or manually: node scripts/prepare-simplewallet.js
+ * Downloads the pinned Zano Windows build ZIP and stages simplewallet.exe plus
+ * required .dll files into build/vendor/simplewallet-win/ for packaging.
+ *
+ * Run automatically before pack/dist, or manually:
+ * node scripts/prepare-simplewallet.js
  */
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
 const projectRoot = path.resolve(__dirname, "..");
-const resourcesDir = path.join(projectRoot, "resources");
+const stagingDir = path.join(projectRoot, "build", "vendor", "simplewallet-win");
 // Pinned Windows ZIP for reproducible builds. Bump intentionally when you want
 // to ship a newer backend; see https://github.com/hyle-team/zano/releases
 const WINDOWS_ZIP_URL =
@@ -60,7 +62,8 @@ async function main() {
       console.error("simplewallet.exe not found inside the downloaded ZIP.");
       process.exit(1);
     }
-    fs.mkdirSync(resourcesDir, { recursive: true });
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    fs.mkdirSync(stagingDir, { recursive: true });
     const entries = fs.readdirSync(simplewalletDir, { withFileTypes: true });
     let copied = 0;
     for (const e of entries) {
@@ -68,7 +71,7 @@ async function main() {
       const lower = e.name.toLowerCase();
       if (lower === "simplewallet.exe" || lower.endsWith(".dll")) {
         const src = path.join(simplewalletDir, e.name);
-        const dest = path.join(resourcesDir, e.name);
+        const dest = path.join(stagingDir, e.name);
         fs.copyFileSync(src, dest);
         console.log("Copied", e.name);
         copied++;
@@ -78,12 +81,18 @@ async function main() {
       console.error("No simplewallet.exe or .dll files found in", simplewalletDir);
       process.exit(1);
     }
-    const dllCount = fs.readdirSync(resourcesDir).filter((n) => n.toLowerCase().endsWith(".dll")).length;
+    const dllCount = fs.readdirSync(stagingDir).filter((n) => n.toLowerCase().endsWith(".dll")).length;
     if (dllCount === 0) {
-      console.error("No .dll files in resources/ — portable will fail on other PCs. Aborting.");
+      console.error("No .dll files in build/vendor/simplewallet-win/; portable build will fail.");
       process.exit(1);
     }
-    console.log("Done. Copied", copied, "file(s) to resources/ (", dllCount, "DLLs).");
+    console.log(
+      "Done. Staged",
+      copied,
+      "file(s) in build/vendor/simplewallet-win/ (",
+      dllCount,
+      "DLLs)."
+    );
   } finally {
     try {
       fs.rmSync(tempDir, { recursive: true });

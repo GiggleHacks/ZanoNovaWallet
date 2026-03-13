@@ -76,11 +76,20 @@ function isSoundEnabled() {
   return soundEnabled;
 }
 
+function sound(file) { return "../resources/" + file; }
+
 function toSoundUrl(dataOrUrl) {
   if (dataOrUrl == null) return null;
   if (typeof dataOrUrl === "string") return dataOrUrl;
   const blob = new Blob([dataOrUrl], { type: "audio/mpeg" });
   return URL.createObjectURL(blob);
+}
+
+/** Suggest a non-existing wallet path in the default wallets dir. */
+async function suggestWalletPath(filename) {
+  const paths = await window.zano.getPaths().catch(() => null);
+  if (!paths?.walletsDir) return null;
+  return window.zano.suggestNewWalletPath(paths.walletsDir + "/" + filename).catch(() => null);
 }
 
 async function playStartupSoundOnce() {
@@ -90,7 +99,7 @@ async function playStartupSoundOnce() {
   try {
     if (!startupSoundUrl) {
       const data = await window.zano.getStartupSoundUrl?.().catch(() => null);
-      startupSoundUrl = toSoundUrl(data) || "../resources/zano_nova__startup.mp3";
+      startupSoundUrl = toSoundUrl(data) || sound("zano_nova__startup.mp3");
     }
     if (!startupAudio) {
       startupAudio = new Audio(startupSoundUrl);
@@ -110,7 +119,7 @@ async function playSendSound() {
   try {
     if (!sendSoundUrl) {
       const data = await window.zano.getSendSoundUrl?.().catch(() => null);
-      sendSoundUrl = toSoundUrl(data) || "../resources/zano_nova_send2.mp3";
+      sendSoundUrl = toSoundUrl(data) || sound("zano_nova_send2.mp3");
     }
     if (!sendAudio) {
       sendAudio = new Audio(sendSoundUrl);
@@ -164,7 +173,7 @@ async function playReceiveSound() {
   try {
     if (!receiveSoundUrl) {
       const data = await window.zano.getReceivedSoundUrl?.().catch(() => null);
-      receiveSoundUrl = toSoundUrl(data) || "../resources/zano__nova_recieved.mp3";
+      receiveSoundUrl = toSoundUrl(data) || sound("zano__nova_recieved.mp3");
     }
     if (!receiveAudio) {
       receiveAudio = new Audio(receiveSoundUrl);
@@ -208,8 +217,10 @@ async function prewarmSoundsIfNeeded() {
   }
 }
 
+const _elCache = {};
 function $(id) {
-  return document.getElementById(id);
+  if (id in _elCache) return _elCache[id];
+  return (_elCache[id] = document.getElementById(id));
 }
 
 function setText(el, text) {
@@ -398,7 +409,6 @@ async function resolveExePath() {
 async function locateSimplewallet() {
   const res = await window.zano.openFileDialog({
     properties: ["openFile"],
-    filters: [{ name: "Executable", extensions: ["exe"] }],
   });
   const p = res?.filePaths?.[0];
   if (!p) return null;
@@ -433,7 +443,7 @@ async function startWalletRpc(passwordOverride) {
   if ($("logArea")) appendLog($("logArea"), `Starting simplewallet RPC on ${cfg.walletRpcBindIp}:${cfg.walletRpcBindPort}…`);
 
   const resolved = await resolveExePath();
-  if ($("logArea")) appendLog($("logArea"), `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
+  if ($("logArea")) appendLog($("logArea"), `simplewallet: ${resolved.resolved || "(not found)"}`);
   if (!resolved.resolved && Array.isArray(resolved.candidates)) {
     if ($("logArea")) appendLog($("logArea"), `Tried:\n- ${resolved.candidates.join("\n- ")}`);
   }
@@ -847,37 +857,46 @@ function wireUi() {
     switchView("security");
   });
 
-  $("btnAddWallet")?.addEventListener("click", async () => {
+  async function resetCreateForm() {
     $("addWalletLog").textContent = "";
     $("addWalletName").value = "";
     $("addWalletPassword").value = "";
     $("addWalletPassword2").value = "";
-    $("addWalletPathHint").textContent = "No file selected.";
     selectedCreatePath = null;
+    createPathManuallyChosen = false;
+    const suggested = await suggestWalletPath("wallet.zan");
+    selectedCreatePath = suggested;
+    $("addWalletPathHint").textContent = suggested || "No file selected.";
+  }
+
+  async function resetRestoreForm() {
+    $("restoreWalletLog").textContent = "";
+    $("restoreWalletName").value = "";
+    $("restoreSeedPhrase").value = "";
+    $("restoreSeedPassphrase").value = "";
+    $("restoreWalletPassword").value = "";
+    $("restoreWalletPassword2").value = "";
+    selectedRestorePath = null;
+    restorePathManuallyChosen = false;
+    const suggested = await suggestWalletPath("restored_wallet.zan");
+    selectedRestorePath = suggested;
+    $("restoreWalletPathHint").textContent = suggested || "No file selected.";
+  }
+
+  $("btnAddWallet")?.addEventListener("click", async () => {
+    await resetCreateForm();
     switchView("addWallet");
   });
 
   $("btnWelcomeCreate")?.addEventListener("click", () => $("btnAddWallet")?.click());
   $("btnWelcomeOpen")?.addEventListener("click", () => $("btnLoadWallet")?.click());
-  $("btnWelcomeRestore")?.addEventListener("click", () => {
-    $("restoreWalletLog").textContent = "";
-    $("restoreWalletName").value = "";
-    $("restoreSeedPhrase").value = "";
-    $("restoreSeedPassphrase").value = "";
-    $("restoreWalletPassword").value = "";
-    $("restoreWalletPassword2").value = "";
-    $("restoreWalletPathHint").textContent = "No file selected.";
+  $("btnWelcomeRestore")?.addEventListener("click", async () => {
+    await resetRestoreForm();
     switchView("restoreWallet");
   });
 
-  $("btnOpenRestoreWizard")?.addEventListener("click", () => {
-    $("restoreWalletLog").textContent = "";
-    $("restoreWalletName").value = "";
-    $("restoreSeedPhrase").value = "";
-    $("restoreSeedPassphrase").value = "";
-    $("restoreWalletPassword").value = "";
-    $("restoreWalletPassword2").value = "";
-    $("restoreWalletPathHint").textContent = "No file selected.";
+  $("btnOpenRestoreWizard")?.addEventListener("click", async () => {
+    await resetRestoreForm();
     switchView("restoreWallet");
   });
 
@@ -940,19 +959,49 @@ function wireUi() {
   });
 
   let selectedCreatePath = null;
+  let createPathManuallyChosen = false;
   $("btnSelectWalletLocation")?.addEventListener("click", async () => {
     const p = await window.zano.saveWalletDialog().catch(() => null);
     if (!p) return;
     selectedCreatePath = p;
+    createPathManuallyChosen = true;
     $("addWalletPathHint").textContent = p;
   });
 
+  // Update default path when wallet name changes (unless user manually chose a location)
+  $("addWalletName")?.addEventListener("input", async () => {
+    if (createPathManuallyChosen) return;
+    const name = $("addWalletName").value.trim();
+    if (!name) return;
+    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const suggested = await suggestWalletPath(safeName + ".zan");
+    if (suggested) {
+      selectedCreatePath = suggested;
+      $("addWalletPathHint").textContent = suggested;
+    }
+  });
+
   let selectedRestorePath = null;
+  let restorePathManuallyChosen = false;
   $("btnSelectRestoreLocation")?.addEventListener("click", async () => {
     const p = await window.zano.saveWalletDialog().catch(() => null);
     if (!p) return;
     selectedRestorePath = p;
+    restorePathManuallyChosen = true;
     $("restoreWalletPathHint").textContent = p;
+  });
+
+  // Update default path when restore wallet name changes (unless user manually chose a location)
+  $("restoreWalletName")?.addEventListener("input", async () => {
+    if (restorePathManuallyChosen) return;
+    const name = $("restoreWalletName").value.trim();
+    if (!name) return;
+    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const suggested = await suggestWalletPath(safeName + ".zan");
+    if (suggested) {
+      selectedRestorePath = suggested;
+      $("restoreWalletPathHint").textContent = suggested;
+    }
   });
 
   $("btnCreateWalletWizard")?.addEventListener("click", async () => {
@@ -973,10 +1022,10 @@ function wireUi() {
     try {
       const cfg = await window.zano.configGet();
       const resolved = await resolveExePath();
-      appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
+      appendLog(logEl, `simplewallet: ${resolved.resolved || "(not found)"}`);
       if (!resolved.resolved) {
         setUiBusy(false);
-        return appendLog(logEl, "simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
+        return appendLog(logEl, "simplewallet was not found. Bundle it with the app or choose a source binary in Settings → Wallet so the app can copy it into its data directory.");
       }
 
       let walletFile = await window.zano.suggestNewWalletPath(selectedCreatePath);
@@ -1023,10 +1072,10 @@ function wireUi() {
     try {
       const cfg = await window.zano.configGet();
       const resolved = await resolveExePath();
-      appendLog(logEl, `simplewallet.exe: ${resolved.resolved || "(not found)"}`);
+      appendLog(logEl, `simplewallet: ${resolved.resolved || "(not found)"}`);
       if (!resolved.resolved) {
         setUiBusy(false);
-        return appendLog(logEl, "simplewallet.exe not found. Place it in the same folder as this app, or set a path in Settings → Wallet.");
+        return appendLog(logEl, "simplewallet was not found. Bundle it with the app or choose a source binary in Settings → Wallet so the app can copy it into its data directory.");
       }
 
     let walletFile = await window.zano.suggestNewWalletPath(selectedRestorePath);
@@ -1112,7 +1161,6 @@ function wireUi() {
   $("btnBrowseExe").addEventListener("click", async () => {
     const res = await window.zano.openFileDialog({
       properties: ["openFile"],
-      filters: [{ name: "simplewallet.exe", extensions: ["exe"] }],
     });
     const p = res?.filePaths?.[0];
     if (p) $("cfgExe").value = p;
@@ -1122,9 +1170,9 @@ function wireUi() {
     $("logArea").textContent = "";
     const p = await locateSimplewallet();
     if (!p) return;
-    appendLog($("logArea"), `Saved simplewallet.exe path:\n${p}`);
+    appendLog($("logArea"), `Saved simplewallet path:\n${p}`);
     const resolved = await resolveExePath();
-    appendLog($("logArea"), `Resolved simplewallet.exe:\n${resolved.resolved || "(not found)"}`);
+    appendLog($("logArea"), `Resolved simplewallet:\n${resolved.resolved || "(not found)"}`);
   });
 
   $("btnLoadWallet")?.addEventListener("click", async () => {

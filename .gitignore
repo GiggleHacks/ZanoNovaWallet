@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.log
 debug-*.log
+build/vendor/
+resources/*.dll
+resources/simplewallet.exe

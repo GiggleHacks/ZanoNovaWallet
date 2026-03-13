@@ -2,12 +2,20 @@
   "name": "zano-nova",
   "version": "1.0.0",
   "description": "Zano Nova — Zano Without the Blockchain Wait.",
-  "main": "main\\main.js",
+  "main": "main/main.js",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "node scripts/prepare-simplewallet.js && electron-builder",
+    "dev": "node scripts/run-dev.js",
+    "pack": "node scripts/run-builder.js --mode=pack",
+    "pack:win": "node scripts/run-builder.js --mode=pack --win",
+    "pack:mac": "node scripts/run-builder.js --mode=pack --mac",
+    "pack:linux": "node scripts/run-builder.js --mode=pack --linux",
+    "dist": "node scripts/run-builder.js",
+    "dist:win": "node scripts/run-builder.js --win",
+    "dist:mac": "node scripts/run-builder.js --mac",
+    "dist:linux": "node scripts/run-builder.js --linux",
     "prepare-simplewallet": "node scripts/prepare-simplewallet.js",
+    "prepare-zano:mac": "node scripts/prepare-zano-macos.js",
     "build-icon": "node scripts/build-icon.js"
   },
   "keywords": [],
@@ -21,40 +29,8 @@
     "adm-zip": "^0.5.16",
     "electron": "^41.0.0",
     "electron-builder": "^26.8.1",
+    "electronmon": "^2.0.2",
     "sharp": "^0.33.5",
     "to-ico": "^1.0.1"
-  },
-  "build": {
-    "appId": "org.zano.simplewallet.light",
-    "productName": "Zano Nova",
-    "files": [
-      "main/**",
-      "renderer/**",
-      "assets/**",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources",
-        "to": "resources",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "directories": {
-      "buildResources": "assets",
-      "output": "dist"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
   }
 }
