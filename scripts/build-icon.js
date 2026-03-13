@@ -1,5 +1,6 @@
 /**
- * Builds assets/icon.ico from assets/logo.png on a black background.
+ * Builds assets/icon.ico and assets/icon.png from renderer/assets/zano-logo.png
+ * on a black background.
  * Run: node scripts/build-icon.js
  * Requires: npm install sharp to-ico
  */
@@ -7,9 +8,9 @@ const path = require("path");
 const fs = require("fs");
 
 const projectRoot = path.resolve(__dirname, "..");
-const assetsDir = path.join(projectRoot, "assets");
-const logoPath = path.join(assetsDir, "logo.png");
-const iconPath = path.join(assetsDir, "icon.ico");
+const sourceLogoPath = path.join(projectRoot, "renderer", "assets", "zano-logo.png");
+const iconPath = path.join(projectRoot, "assets", "icon.ico");
+const pngIconPath = path.join(projectRoot, "assets", "icon.png");
 
 async function main() {
   let sharp, toIco;
@@ -21,8 +22,8 @@ async function main() {
     process.exit(1);
   }
 
-  if (!fs.existsSync(logoPath)) {
-    console.error("Missing assets/logo.png");
+  if (!fs.existsSync(sourceLogoPath)) {
+    console.error("Missing renderer/assets/zano-logo.png");
     process.exit(1);
   }
 
@@ -40,7 +41,7 @@ async function main() {
     .toBuffer();
 
   // Logo resized to fit inside size with padding
-  const logo = sharp(logoPath)
+  const logo = sharp(sourceLogoPath)
     .resize(size - 32, size - 32, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .toBuffer();
 
@@ -59,7 +60,9 @@ async function main() {
 
   const ico = await toIco(buffers);
   fs.writeFileSync(iconPath, ico);
+  fs.writeFileSync(pngIconPath, composed);
   console.log("Wrote", iconPath);
+  console.log("Wrote", pngIconPath);
 }
 
 main().catch((e) => {

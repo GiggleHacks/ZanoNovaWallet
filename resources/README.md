@@ -2,6 +2,11 @@
 
 This folder is copied into the built app as `resources/resources/`.
 
-**Populated automatically:** Running `npm run dist` (or `npm run prepare-simplewallet`) downloads the latest Zano Windows build and copies `simplewallet.exe` and all required `.dll` files here, so the packaged app works for users without any setup.
+This folder is for app-level resources (audio, docs, static assets).
 
-If you need to refresh the binaries, run `npm run prepare-simplewallet` then `npm run dist`.
+Windows wallet binaries are staged outside this folder during Windows builds:
+
+- staged path: `build/vendor/simplewallet-win/`
+- build command: `npm run dist:win`
+
+The staged payload is injected into packaged app resources only for platform-specific targets.

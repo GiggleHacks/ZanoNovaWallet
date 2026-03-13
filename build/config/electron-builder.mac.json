@@ -1,0 +1,19 @@
+{
+  "extends": "./build/config/electron-builder.base.json",
+  "extraResources": [
+    {
+      "from": "build/vendor/zano-macos",
+      "to": "resources/zano-macos",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "mac": {
+    "icon": "assets/icon.png",
+    "target": [
+      "dmg",
+      "zip"
+    ]
+  }
+}

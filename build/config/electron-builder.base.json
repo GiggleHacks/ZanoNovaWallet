@@ -1,0 +1,15 @@
+{
+  "appId": "org.zano.simplewallet.light",
+  "productName": "Zano Nova",
+  "files": [
+    "main/**",
+    "renderer/**",
+    "assets/**",
+    "package.json"
+  ],
+  "directories": {
+    "buildResources": "assets",
+    "output": "dist"
+  },
+  "icon": "assets/icon.png"
+}
