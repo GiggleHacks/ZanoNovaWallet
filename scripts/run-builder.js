@@ -149,7 +149,7 @@ function getPlatformSpec(platform) {
       flag: "--win",
       config: "build/config/electron-builder.win.json",
       targetEnv: "WIN_TARGET",
-      defaultPackTarget: null,
+      defaultPackTarget: "dir",
       prepareScript: "scripts/prepare-simplewallet.js",
     },
     linux: {
