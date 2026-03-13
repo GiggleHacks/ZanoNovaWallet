@@ -128,6 +128,7 @@ export function setupTooltips() {
   }, true);
 
   document.addEventListener("pointerleave", (e) => {
+    if (!e.target?.closest) return;
     const tip = e.target.closest("[data-tooltip]");
     if (!tip) return;
     clearTimeout(timer);

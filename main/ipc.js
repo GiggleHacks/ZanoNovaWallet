@@ -102,6 +102,10 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
     throw e;
   });
 
+  if (ready?.stopped) {
+    return { ok: false, stopped: true, state: sw.getSimplewalletState() };
+  }
+
   sw.setSimplewalletState({ status: "running", rpcUrl: ready.url });
   return { ok: true, state: sw.getSimplewalletState(), rpcUrl: ready.url };
 });
