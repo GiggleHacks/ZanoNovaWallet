@@ -149,7 +149,7 @@ function getPlatformSpec(platform) {
       flag: "--win",
       config: "build/config/electron-builder.win.json",
       targetEnv: "WIN_TARGET",
-      defaultPackTarget: "dir",
+      defaultPackTarget: null,
       prepareScript: "scripts/prepare-simplewallet.js",
     },
     linux: {
@@ -174,7 +174,12 @@ function buildArgsForPlatform(platform, mode, passthroughArgs) {
   const targets = splitCsv(process.env[spec.targetEnv]);
 
   if (mode === "pack") {
-    args.push(...(targets.length > 0 ? targets : [spec.defaultPackTarget]));
+    if (targets.length > 0) {
+      args.push(...targets);
+    } else if (spec.defaultPackTarget) {
+      args.push(spec.defaultPackTarget);
+    }
+    // If neither set, electron-builder uses the config file's "target" array
   } else if (targets.length > 0) {
     args.push(...targets);
   }
