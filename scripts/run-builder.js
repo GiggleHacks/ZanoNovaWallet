@@ -34,22 +34,31 @@ function truthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || ""));
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   console.log("Executing:", command, args.join(" "));
 
   let spawnCommand = command;
   let spawnArgs = args;
+  const env = options.env ? { ...process.env, ...options.env } : process.env;
 
   if (process.platform === "win32" && command.endsWith(".cmd")) {
     spawnCommand = "cmd.exe";
     spawnArgs = ["/c", command, ...args];
   }
 
-  const result = spawnSync(spawnCommand, spawnArgs, { stdio: "inherit" });
+  const result = spawnSync(spawnCommand, spawnArgs, { stdio: "inherit", env });
   if (result.error) {
     console.error("Error executing command:", result.error);
   }
   if (result.status !== 0) process.exit(result.status || 1);
+}
+
+function getBuilderEnvForPlatform(platform) {
+  if (platform !== "mac") return null;
+  if (truthy(process.env.BUILD_MAC_SIGN)) return null;
+  return {
+    CSC_IDENTITY_AUTO_DISCOVERY: "false",
+  };
 }
 
 function ensureAppIcon() {
@@ -237,7 +246,11 @@ function buildArgsForPlatform(platform, mode, passthroughArgs) {
       }
 
       const args = buildArgsForPlatform(platform, mode, passthroughArgs);
-      run(electronBuilderBinary, args);
+      const builderEnv = getBuilderEnvForPlatform(platform);
+      if (builderEnv) {
+        console.log("macOS code signing disabled for this build (set BUILD_MAC_SIGN=1 to enable).");
+      }
+      run(electronBuilderBinary, args, { env: builderEnv });
     }
   } catch (error) {
     console.error("Fatal error in run-builder.js:", error);
