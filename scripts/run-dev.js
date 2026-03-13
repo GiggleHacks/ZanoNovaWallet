@@ -119,12 +119,12 @@ async function killExistingProjectProcesses() {
   try {
     processes = listProjectProcesses();
   } catch (error) {
-    console.warn(`Process scan skipped: ${error.message || error}`);
+    console.warn(`Process scan skipped: ${error.message || error}. Continuing startup.`);
     return;
   }
 
   if (processes.length === 0) {
-    console.log("No existing Zano Nova Electron processes found.");
+    console.log("No existing Zano Nova Electron processes found. Continuing startup.");
     return;
   }
 
@@ -166,9 +166,22 @@ async function main() {
     throw new Error(`electronmon binary not found at ${electronmonBinary}`);
   }
 
-  await killExistingProjectProcesses();
+  try {
+    await killExistingProjectProcesses();
+  } catch (error) {
+    console.warn(`Pre-launch cleanup failed: ${error.message || error}. Continuing startup.`);
+  }
 
-  const child = spawn(electronmonBinary, [".", ...process.argv.slice(2)], {
+  console.log("Starting electronmon...");
+
+  let childCommand = electronmonBinary;
+  let childArgs = [".", ...process.argv.slice(2)];
+  if (process.platform === "win32" && electronmonBinary.endsWith(".cmd")) {
+    childCommand = "cmd.exe";
+    childArgs = ["/c", electronmonBinary, ...childArgs];
+  }
+
+  const child = spawn(childCommand, childArgs, {
     cwd: process.cwd(),
     stdio: "inherit",
   });
