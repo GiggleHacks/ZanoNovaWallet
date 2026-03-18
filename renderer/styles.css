@@ -493,6 +493,188 @@ input:focus {
   box-shadow: 0 0 0 4px rgba(59,108,255,.12), 0 0 20px rgba(59,108,255,.06);
 }
 
+/* ── Asset dropdown (fUSD / Zano style) ───────────────────────────────── */
+
+.assetDropdownWrapper {
+  position: relative;
+  display: inline-block;
+  min-width: 200px;
+}
+
+.assetDropdownTrigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: #0d1a2d;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 0.824rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  text-align: left;
+}
+.assetDropdownTrigger:hover {
+  background: #122033;
+  border-color: rgba(255,255,255,.18);
+}
+.assetDropdownTrigger[aria-expanded="true"] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(59,108,255,.2);
+}
+.assetDropdownTrigger .assetTriggerIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: contain;
+  flex-shrink: 0;
+  background: rgba(255,255,255,.08);
+}
+.assetDropdownTrigger .assetTriggerIcon.zanoPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.824rem;
+  color: var(--aqua);
+}
+.assetDropdownTrigger .assetTriggerLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetDropdownPanel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #0d1a2d;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  padding: 6px 0;
+}
+.assetDropdownPanel[hidden] {
+  display: none !important;
+}
+
+.assetOption {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  color: #fff;
+  font-size: 0.824rem;
+  cursor: pointer;
+  transition: background .15s;
+  border: none;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  font-family: var(--sans);
+}
+.assetOption:hover {
+  background: rgba(255,255,255,.06);
+}
+.assetOption.selected {
+  background: rgba(59,108,255,.25);
+}
+.assetOption .assetOptionIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: contain;
+  flex-shrink: 0;
+  background: rgba(255,255,255,.08);
+}
+.assetOption .assetOptionIcon.zanoPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.824rem;
+  color: var(--aqua);
+}
+.assetOption .assetOptionLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assetOption .assetOptionRadio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.4);
+  flex-shrink: 0;
+  transition: border-color .2s, background .2s;
+}
+.assetOption.selected .assetOptionRadio {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
+/* Inline asset icon (e.g. next to balance when fUSD selected) */
+.assetContextIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: contain;
+  vertical-align: middle;
+  margin-right: 6px;
+  background: rgba(255,255,255,.06);
+}
+.assetContextIconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.assetContextIconWrap img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: contain;
+  background: rgba(255,255,255,.06);
+}
+.assetContextIconWrap .zanoPlaceholder {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0,229,208,.15);
+  color: var(--aqua);
+  font-weight: 700;
+  font-size: 0.765rem;
+}
+.balanceAmountRow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.recvAssetRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.recvAssetRow .hint { margin-top: 0; }
+
 /* ── Hints & kickers ──────────────────────────────────────────────────── */
 
 .hint {
@@ -608,6 +790,41 @@ input:focus {
   font-weight: 400;
 }
 
+/* ── Balance breakdown (USD total + token lines) ─────────────────────── */
+
+.balanceBreakdown {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.breakdownLine {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.changePct {
+  font-size: 0.76rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.changePct.pctUp {
+  color: var(--success);
+  background: rgba(0, 229, 208, .10);
+}
+
+.changePct.pctDown {
+  color: var(--danger);
+  background: rgba(255, 69, 69, .10);
+}
+
 .balanceActions {
   margin-top: 4px;
   margin-bottom: 0;
@@ -621,6 +838,36 @@ input:focus {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.recvGlow {
+  animation: recvGlowPulse 1.7s ease-in-out;
+}
+
+@keyframes recvGlowPulse {
+  0% {
+    filter: none;
+  }
+  12% {
+    filter:
+      drop-shadow(0 0 10px rgba(59, 108, 255, 0.35))
+      drop-shadow(0 0 6px rgba(0, 229, 208, 0.18));
+  }
+  65% {
+    filter:
+      drop-shadow(0 0 8px rgba(59, 108, 255, 0.28))
+      drop-shadow(0 0 5px rgba(0, 229, 208, 0.14));
+  }
+  100% {
+    filter: none;
+  }
+}
+
+.historyCard.refreshing {
+  box-shadow:
+    0 0 0 1px rgba(59, 108, 255, 0.55),
+    0 0 18px rgba(59, 108, 255, 0.45);
+  transition: box-shadow .25s ease-out;
 }
 
 /* ── Grids ────────────────────────────────────────────────────────────── */
@@ -638,6 +885,43 @@ input:focus {
   gap: 10px;
   align-items: center;
 }
+
+.amountInputWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.amountInputWrap input {
+  width: 100%;
+  padding-right: 64px;
+}
+.pillBtn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.06);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.706rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.pillBtn:hover {
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  border-color: rgba(255,255,255,.22);
+}
+.pillBtn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
 .addressInput {
   font-family: var(--mono);
   font-size: 0.706rem;
@@ -828,6 +1112,159 @@ input:focus {
   accent-color: var(--primary);
 }
 
+/* ── Sounds settings card ─────────────────────────────────────────────── */
+
+.soundsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.soundsHeader h2 { margin: 0; }
+
+/* Toggle switch (master) */
+.toggleSwitch {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+}
+.toggleSwitch input { display: none; }
+.toggleTrack {
+  display: block;
+  width: 42px;
+  height: 22px;
+  border-radius: 12px;
+  background: var(--bg-input);
+  transition: background .2s;
+  position: relative;
+}
+.toggleTrack::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform .2s, background .2s;
+}
+.toggleSwitch input:checked + .toggleTrack {
+  background: var(--primary);
+}
+.toggleSwitch input:checked + .toggleTrack::after {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+/* Volume slider */
+.soundsVolRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.soundsVolLabel {
+  color: var(--text-secondary);
+  font-size: 0.765rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  flex-shrink: 0;
+}
+.soundsVolValue {
+  color: var(--text-secondary);
+  font-size: 0.765rem;
+  min-width: 36px;
+  text-align: right;
+}
+.volumeSlider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  outline: none;
+}
+.volumeSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 6px rgba(59,108,255,.3);
+}
+
+/* Sound event rows */
+.soundEventsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.soundEventRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+.soundEventRow:first-child { border-top: none; }
+
+.soundEventName {
+  flex: 1;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+.soundEventPlay {
+  background: none;
+  border: 1px solid rgba(255,255,255,.12);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.soundEventPlay:hover {
+  background: rgba(255,255,255,.06);
+  color: var(--text);
+}
+
+/* Per-sound toggle (smaller variant of the master) */
+.soundEventToggle {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+}
+.soundEventToggle input { display: none; }
+.soundEventToggle .toggleTrack {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+}
+.soundEventToggle .toggleTrack::after {
+  width: 14px;
+  height: 14px;
+}
+.soundEventToggle input:checked + .toggleTrack {
+  background: var(--primary);
+}
+.soundEventToggle input:checked + .toggleTrack::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* Disabled state for sounds card when master is off */
+.soundsCard.disabled .soundEventsList,
+.soundsCard.disabled .soundsVolRow {
+  opacity: .4;
+  pointer-events: none;
+}
+
 /* ── Seed phrase display ──────────────────────────────────────────────── */
 
 .seedWords {
@@ -929,7 +1366,7 @@ input:focus {
 .tx {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--bg-surface);
   transition: all .2s var(--ease-out);
 }
@@ -947,12 +1384,14 @@ input:focus {
 .txMain {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
 }
 
 .txDir {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 10px;
   display: flex;
   align-items: center;
@@ -972,15 +1411,40 @@ input:focus {
   box-shadow: 0 0 16px rgba(255,77,109,.06);
 }
 
+.txText {
+  flex: 1;
+  min-width: 0;
+}
+.txLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .txAmount {
   font-weight: 700;
-  font-size: 0.882rem;
+  font-size: 0.824rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .txMeta {
   color: var(--text-secondary);
   font-size: 0.647rem;
   margin-top: 2px;
 }
+
+.txTime {
+  color: var(--text-tertiary);
+  font-size: 0.647rem;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Compact mode: hide redundant "Received/Sent" label (arrow already conveys it). */
+.txMeta { display: none; }
 
 .txConfWrap {
   display: flex;
@@ -1023,7 +1487,7 @@ input:focus {
 
 .hashRow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   margin-top: 8px;
 }
@@ -1054,7 +1518,7 @@ input:focus {
   border-radius: 6px;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 2px 6px;
+  padding: 3px 6px;
   font-size: 0.706rem;
   line-height: 1;
   flex-shrink: 0;
@@ -1090,6 +1554,10 @@ input:focus {
 
 .txHint {
   /* inherited from .hint */
+}
+
+.txHint:empty {
+  display: none;
 }
 
 /* ── History pager ────────────────────────────────────────────────────── */

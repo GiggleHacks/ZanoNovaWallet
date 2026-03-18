@@ -1,9 +1,10 @@
 import { createLogger } from "./lib/logger.js";
 import { $, setText, appendLog } from "./lib/dom.js";
 import { state, getSessionPassword, setSessionPassword } from "./lib/state.js";
-import { atomicToZanoString, getMaxSendableAtomic } from "./lib/currency.js";
-import { ATOMIC_UNITS, AUTO_REFRESH_MS } from "./lib/constants.js";
-import { prewarmSoundsIfNeeded, playStartupSoundOnce } from "./lib/audio.js";
+import { atomicToZanoString, getMaxSendableAtomic, parseAmountToAtomic, atomicToDisplayString } from "./lib/currency.js";
+import { ATOMIC_UNITS, AUTO_REFRESH_MS, FUSD_ASSET_ID, ZANO_ASSET_ID } from "./lib/constants.js";
+import { fetchPricesOnce } from "./lib/prices.js";
+import { prewarmSoundsIfNeeded, playStartupSoundOnce, SOUNDS, previewSound } from "./lib/audio.js";
 import { switchView, setStatus, setUiBusy, setupTooltips, hideTooltipIfVisible } from "./lib/views.js";
 import {
   startWalletRpc, stopWalletRpc,
@@ -13,11 +14,14 @@ import {
   resolveExePath, locateSimplewallet, refreshLocateButtonVis,
   showBaseAddress, renderReceiveQr,
   updateSendDialogBalances, suggestWalletPath, getDefaultWalletPath,
+  ensureAssetWhitelisted, renderHeaderBalance, renderHeaderBalanceFromCache, populateAssetSelector,
 } from "./lib/wallet.js";
 import { send } from "./lib/send.js";
 import { showSeedBackupForWallet, viewSeedPhraseFlow, handleConfirmViewSeed } from "./lib/seed.js";
 
 const log = createLogger("init");
+
+
 
 // ---------------------------------------------------------------------------
 // Unlock flow
@@ -36,12 +40,18 @@ async function unlockAndAutoStart() {
   $("unlockOverlay")?.classList.add("hidden");
   switchView("wallet");
 
+  // Immediately show last-known balances from previous session so the user
+  // isn't staring at an empty header while the backend starts.
+  renderHeaderBalanceFromCache();
+
   setUiBusy(true, "Starting backend…");
   startWalletRpc(pwd)
     .then(async (result) => {
       if (result?.stopped) return; // intentional stop — no error
+      await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
       await showBaseAddress().catch(() => {});
       await refreshBalance().catch(() => {});
+      await loadPricesAndRender();
       await refreshHistory().catch(() => {});
     })
     .catch((e) => {
@@ -55,17 +65,108 @@ async function unlockAndAutoStart() {
 }
 
 // ---------------------------------------------------------------------------
+// Price fetch helper
+// ---------------------------------------------------------------------------
+
+async function loadPricesAndRender() {
+  try {
+    const prices = await fetchPricesOnce();
+    state.usdPrices = prices;
+  } catch { /* graceful fallback — renderHeaderBalance handles null */ }
+  renderHeaderBalance();
+}
+
+// ---------------------------------------------------------------------------
+// Sounds settings wiring
+// ---------------------------------------------------------------------------
+
+function wireSoundsSettings() {
+  const card       = document.querySelector(".soundsCard");
+  const masterEl   = $("soundMasterToggle");
+  const sliderEl   = $("soundVolumeSlider");
+  const volValEl   = $("soundVolumeValue");
+  const listEl     = $("soundEventsList");
+  if (!card || !masterEl || !sliderEl || !listEl) return;
+
+  function updateDisabledState() {
+    card.classList.toggle("disabled", !state.soundEnabled);
+  }
+
+  // Master toggle
+  masterEl.checked = state.soundEnabled;
+  updateDisabledState();
+  masterEl.addEventListener("change", async () => {
+    state.soundEnabled = Boolean(masterEl.checked);
+    updateDisabledState();
+    try { await window.zano.configSet({ soundEnabled: state.soundEnabled }); } catch {}
+  });
+
+  // Volume slider
+  sliderEl.value = Math.round(state.soundVolume * 100);
+  if (volValEl) volValEl.textContent = `${sliderEl.value}%`;
+  sliderEl.addEventListener("input", () => {
+    const pct = Number(sliderEl.value);
+    state.soundVolume = pct / 100;
+    if (volValEl) volValEl.textContent = `${pct}%`;
+  });
+  sliderEl.addEventListener("change", async () => {
+    try { await window.zano.configSet({ soundVolume: state.soundVolume }); } catch {}
+  });
+
+  // Per-sound rows
+  for (const [type, info] of Object.entries(SOUNDS)) {
+    const row = document.createElement("div");
+    row.className = "soundEventRow";
+
+    const name = document.createElement("span");
+    name.className = "soundEventName";
+    name.textContent = info.label;
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "soundEventPlay";
+    playBtn.type = "button";
+    playBtn.textContent = "\u25B6 Play";
+    playBtn.addEventListener("click", () => previewSound(type));
+
+    const toggle = document.createElement("label");
+    toggle.className = "soundEventToggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = state.soundToggles[type] !== false;
+    const track = document.createElement("span");
+    track.className = "toggleTrack";
+    toggle.appendChild(cb);
+    toggle.appendChild(track);
+
+    cb.addEventListener("change", async () => {
+      state.soundToggles[type] = Boolean(cb.checked);
+      try { await window.zano.configSet({ soundToggles: { ...state.soundToggles } }); } catch {}
+    });
+
+    row.appendChild(name);
+    row.appendChild(playBtn);
+    row.appendChild(toggle);
+    listEl.appendChild(row);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // UI wiring
 // ---------------------------------------------------------------------------
 
 function wireUi() {
   // --- Navigation ---
-  $("navWallet")?.addEventListener("click", () => switchView("wallet"));
+  $("navWallet")?.addEventListener("click", () => {
+    switchView("wallet");
+    loadPricesAndRender();
+  });
   $("navSettings")?.addEventListener("click", () => switchView("settings"));
   $("navSecurity")?.addEventListener("click", () => {
     if (!getSessionPassword()) return;
     switchView("security");
   });
+
+  // (Asset header dropdown removed — balance card now shows all assets)
 
   // --- Create/restore path selection state (scoped to wireUi closure) ---
   let selectedCreatePath  = null;
@@ -149,6 +250,7 @@ function wireUi() {
     setUiBusy(true, "Starting backend…");
     try {
       await startWalletRpc(password);
+      await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
       await refreshBalance().catch(() => {});
       await refreshHistory(0).catch(() => {});
       const el = $("seedBackupStatus");
@@ -278,6 +380,7 @@ function wireUi() {
       if (walletInput2) walletInput2.value = walletFile;
       setSessionPassword(password);
       await startWalletRpc(password).catch((e) => appendLog(logEl, e?.message || String(e)));
+      await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
       await refreshBalance().catch(() => {});
       await refreshHistory(0).catch(() => {});
       switchView("wallet");
@@ -289,22 +392,55 @@ function wireUi() {
   });
 
   // --- Wallet view actions ---
-  $("btnOpenSend")?.addEventListener("click", async () => {
-    $("sendDialog")?.showModal();
-    try { await refreshBalance(); } catch {}
-    updateSendDialogBalances();
-  });
+  // (Send dialog wiring lives further below)
   $("btnOpenReceive")?.addEventListener("click", async () => {
     $("receiveDialog")?.showModal();
+    const info = state.assetsById?.get(state.selectedAssetId);
+    const ticker = info?.ticker || "ZANO";
+    const ctxEl = $("recvAssetContext");
+    if (ctxEl) ctxEl.textContent = `Send ${ticker} to this address.`;
     try {
       const addr = await showBaseAddress();
       if (addr && $("recvAddress")) $("recvAddress").value = addr;
       await renderReceiveQr(addr);
     } catch {}
   });
+  let lastHistoryRefreshMs = 0;
   $("btnRefreshHistory")?.addEventListener("click", async () => {
-    try { await refreshHistory(0); } catch {}
+    const now = Date.now();
+    if (now - lastHistoryRefreshMs < 60_000) {
+      // Too soon; ignore extra clicks within 60s.
+      return;
+    }
+    lastHistoryRefreshMs = now;
+
+    const btn = $("btnRefreshHistory");
+    const card = document.querySelector(".historyCard");
+    const historyEl = $("history");
+
+    // Immediately clear current transactions so user sees a fresh fetch.
+    if (historyEl) historyEl.replaceChildren();
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Refreshing…";
+    }
+    if (card) card.classList.add("refreshing");
+
+    try {
+      await Promise.all([
+        refreshBalance().catch(() => {}),
+        refreshHistory(0).catch(() => {}),
+      ]);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Refresh";
+      }
+      if (card) card.classList.remove("refreshing");
+    }
   });
+  // (History asset filter dropdown removed — all transfers shown)
 
   // --- Settings view ---
   $("btnOpenSettings")?.addEventListener("click", async () => {
@@ -411,6 +547,104 @@ function wireUi() {
   });
 
   // --- Send dialog ---
+  const showSendEntry = () => {
+    $("sendEntrySection")?.classList.remove("hidden");
+    const logEl = $("sendLog");
+    if (logEl) logEl.textContent = "";
+  };
+
+  function getZanoPriceUsd() {
+    const p = state.usdPrices?.ZANO?.usd;
+    return typeof p === "number" && p > 0 ? p : null;
+  }
+  function fmtUsd(n) {
+    return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function updateSendAmountModeUi() {
+    const assetId = state.selectedAssetId;
+    const pill = $("btnSendAmountMode");
+    const tickerEl = $("sendAmountTicker");
+    const eqEl = $("sendAmountEq");
+    if (!pill || !tickerEl || !eqEl) return;
+
+    const info = state.assetsById?.get(assetId);
+    const ticker = info?.ticker || "ASSET";
+
+    if (assetId !== ZANO_ASSET_ID) {
+      // Non-ZANO assets: no USD toggle.
+      state.sendAmountMode = "ASSET";
+      pill.disabled = true;
+      pill.textContent = ticker;
+      tickerEl.textContent = ticker;
+      eqEl.textContent = "";
+      return;
+    }
+
+    // ZANO supports USD/ZANO toggle.
+    pill.disabled = false;
+    if (state.sendAmountMode !== "USD") state.sendAmountMode = "ASSET";
+    pill.textContent = state.sendAmountMode === "USD" ? "USD" : "ZANO";
+    tickerEl.textContent = state.sendAmountMode === "USD" ? "USD" : "ZANO";
+    updateSendAmountEquivalent();
+  }
+
+  function updateSendAmountEquivalent() {
+    const assetId = state.selectedAssetId;
+    const eqEl = $("sendAmountEq");
+    const amtEl = $("sendAmount");
+    if (!eqEl || !amtEl) return;
+    const raw = Number(amtEl.value);
+    if (!amtEl.value || Number.isNaN(raw) || raw <= 0) {
+      eqEl.textContent = "";
+      return;
+    }
+
+    const info = state.assetsById?.get(assetId) || {};
+    const ticker = info.ticker || "ASSET";
+
+    if (assetId !== ZANO_ASSET_ID) {
+      // fUSD: 1:1 USD hint
+      if (ticker === "fUSD") eqEl.textContent = `≈ ${fmtUsd(raw)}`;
+      else eqEl.textContent = "";
+      return;
+    }
+
+    const price = getZanoPriceUsd();
+    if (!price) { eqEl.textContent = ""; return; }
+    if (state.sendAmountMode === "USD") {
+      const z = raw / price;
+      eqEl.textContent = `≈ ${z.toFixed(6)} ZANO`;
+    } else {
+      const usd = raw * price;
+      eqEl.textContent = `≈ ${fmtUsd(usd)}`;
+    }
+  }
+
+  $("btnSendAmountMode")?.addEventListener("click", () => {
+    if (state.selectedAssetId !== ZANO_ASSET_ID) return;
+    state.sendAmountMode = state.sendAmountMode === "USD" ? "ASSET" : "USD";
+    updateSendAmountModeUi();
+  });
+
+  $("sendAmount")?.addEventListener("input", () => updateSendAmountEquivalent());
+  $("sendAssetSelect")?.addEventListener("change", () => {
+    updateSendDialogBalances();
+    const info = state.assetsById?.get(state.selectedAssetId);
+    const tickerEl = $("sendAmountTicker");
+    if (tickerEl) tickerEl.textContent = info?.ticker || "ASSET";
+    updateSendAmountModeUi();
+  });
+
+  $("btnOpenSend")?.addEventListener("click", async () => {
+    $("sendDialog")?.showModal();
+    showSendEntry();
+    try { await refreshBalance(); } catch {}
+    populateAssetSelector($("sendAssetSelect"));
+    updateSendDialogBalances();
+    updateSendAmountModeUi();
+  });
+
   $("btnSend")?.addEventListener("click", async () => {
     try { await send(); }
     catch (err) { appendLog($("sendLog"), err?.message || String(err)); }
@@ -420,9 +654,12 @@ function wireUi() {
   if (sendAmountEl) {
     const STEP = 0.1;
     const getMaxZano = () => {
-      const maxAtomic = getMaxSendableAtomic();
+      const maxAtomic = getMaxSendableAtomic(state.selectedAssetId);
       if (maxAtomic == null) return Infinity;
-      return Number(maxAtomic) / Number(ATOMIC_UNITS);
+      const info = state.assetsById?.get(state.selectedAssetId);
+      const dp = info?.decimalPoint ?? 12;
+      const divisor = 10 ** dp;
+      return Number(maxAtomic) / divisor;
     };
     sendAmountEl.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -443,10 +680,12 @@ function wireUi() {
     });
   }
   $("btnSendMax")?.addEventListener("click", () => {
-    const maxAtomic = getMaxSendableAtomic();
+    const maxAtomic = getMaxSendableAtomic(state.selectedAssetId);
     const el = $("sendAmount");
     if (!el) return;
-    el.value = maxAtomic != null ? atomicToZanoString(maxAtomic) : "";
+    const info = state.assetsById?.get(state.selectedAssetId);
+    const dp = info?.decimalPoint ?? 12;
+    el.value = maxAtomic != null ? atomicToZanoString(maxAtomic, dp) : "";
   });
 
   // --- History pager ---
@@ -458,15 +697,10 @@ function wireUi() {
     await refreshHistory(state.historyPage + 1);
   });
 
+  // --- Sounds section ---
+  wireSoundsSettings();
+
   // --- Advanced toggles ---
-  const soundToggle = $("soundToggle");
-  if (soundToggle) {
-    soundToggle.checked = state.soundEnabled;
-    soundToggle.addEventListener("change", async () => {
-      state.soundEnabled = Boolean(soundToggle.checked);
-      try { await window.zano.configSet({ soundEnabled: state.soundEnabled }); } catch {}
-    });
-  }
   const tooltipToggle = $("tooltipToggle");
   if (tooltipToggle) {
     tooltipToggle.checked = state.tooltipsEnabled;
@@ -526,6 +760,11 @@ async function init() {
   }
 
   state.soundEnabled    = cfg.soundEnabled    !== false;
+  state.soundVolume     = typeof cfg.soundVolume === "number" ? cfg.soundVolume : 0.9;
+  state.soundToggles    = Object.assign(
+    { startup: true, send: true, receive: true, seed: true },
+    cfg.soundToggles || {},
+  );
   state.tooltipsEnabled = cfg.tooltipsEnabled !== false;
 
   prewarmSoundsIfNeeded().catch(() => {});

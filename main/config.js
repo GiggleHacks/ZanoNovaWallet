@@ -8,6 +8,8 @@ const DEFAULTS = Object.freeze({
   daemonAddress: "37.27.100.59:10500",
   lastWalletPath: "",
   soundEnabled: true,
+  soundVolume: 0.9,
+  soundToggles: { startup: true, send: true, receive: true, seed: true },
   tooltipsEnabled: true,
   simplewalletExePath: "",
 });

@@ -1,5 +1,16 @@
 const { app, BrowserWindow, Menu, shell } = require("electron");
 const path = require("path");
+const os = require("os");
+
+// In dev, use a local userData path to avoid "Access is denied" cache errors when
+// the project lives on OneDrive or another synced/restricted folder.
+if (!app.isPackaged) {
+  const devUserData = path.join(
+    process.env.LOCALAPPDATA || process.env.TEMP || os.tmpdir(),
+    "ZanoNovaDev"
+  );
+  app.setPath("userData", devUserData);
+}
 
 const { tryMigrateFromOldAppName } = require("./config");
 const sw = require("./simplewallet");
@@ -23,8 +34,8 @@ function createSplash() {
 
 function createMainWindow() {
   const win = new BrowserWindow({
-    width: 860,
-    height: 720,
+    width: 800,
+    height: 1000,
     show: false,
     backgroundColor: "#07172a",
     webPreferences: {

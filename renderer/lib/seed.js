@@ -1,6 +1,7 @@
 import { createLogger } from "./logger.js";
 import { $, setText } from "./dom.js";
 import { getSessionPassword, state } from "./state.js";
+import { playSeedSound } from "./audio.js";
 
 const log = createLogger("seed");
 
@@ -109,6 +110,7 @@ export async function handleConfirmViewSeed() {
       wordsEl.appendChild(chip);
     });
     seedView.showModal();
+    playSeedSound().catch(() => {});
 
     $("btnCopySeed")?.addEventListener("click", async () => {
       if (!words.length) return;

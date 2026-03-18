@@ -1,4 +1,5 @@
 import { createLogger } from "./logger.js";
+import { ZANO_ASSET_ID } from "./constants.js";
 
 const log = createLogger("state");
 
@@ -13,22 +14,37 @@ export const state = {
   // Wallet identity
   currentWalletFile: "",
 
-  // Balance (BigInt | null)
+  // Multi-asset state
+  selectedAssetId: ZANO_ASSET_ID,
+  balancesById: new Map(),
+  assetsById: new Map(),
+
+  // Balance (BigInt | null) — convenience aliases for ZANO, kept in sync
   lastZanoUnlockedAtomic: null,
   lastZanoTotalAtomic: null,
 
   // History
   historyPage: 0,
   historyInitialized: false,
+  historyAssetFilter: "all",
   knownIncomeTxs: new Set(),
 
   // Audio
   startupSoundPlayed: false,
   soundEnabled: true,
+  soundVolume: 0.9,
+  soundToggles: { startup: true, send: true, receive: true, seed: true },
   soundsPrewarmed: false,
   startupAudio: null,
   sendAudio: null,
   receiveAudio: null,
+  seedAudio: null,
+
+  // Prices (populated once per session by fetchPricesOnce)
+  usdPrices: null,
+
+  // Send flow
+  sendAmountMode: "ASSET", // "ASSET" | "USD" (ZANO only)
 
   // UI
   uiBusy: false,

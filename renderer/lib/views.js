@@ -118,6 +118,7 @@ export function setupTooltips() {
   }
 
   document.addEventListener("pointerenter", (e) => {
+    if (!e.target?.closest) return;
     const tip = e.target.closest("[data-tooltip]");
     if (!tip) return;
     lastX = e.clientX;

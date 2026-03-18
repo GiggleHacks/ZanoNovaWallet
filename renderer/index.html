@@ -55,7 +55,7 @@
           </div>
 
           <div id="addWalletView" class="view hidden">
-            <div class="card">
+            <div class="card historyCard">
               <h2>Create New Wallet</h2>
               <div class="row">
                 <label class="field" style="flex:1">
@@ -155,8 +155,16 @@
             <div class="card balanceCard">
               <div class="balanceBlock">
                 <div class="kicker">Balance</div>
-                <div id="zanoBalance" class="bigBalance">...</div>
-                <div id="zanoBalanceSub" class="balanceSub">Unlocked: —</div>
+                <span id="totalUsdBalance" class="bigBalance">—</span>
+                <div id="balanceBreakdown" class="balanceBreakdown">
+                  <div class="breakdownLine" id="breakdownZano">
+                    <span id="breakdownZanoAmt"></span>
+                    <span id="breakdownZanoChange" class="changePct"></span>
+                  </div>
+                  <div class="breakdownLine" id="breakdownFusd" style="display:none">
+                    <span id="breakdownFusdAmt"></span>
+                  </div>
+                </div>
               </div>
               <div class="row balanceActions">
                 <button id="btnOpenSend" class="btn alt" type="button" data-busy-disable>Send</button>
@@ -195,16 +203,25 @@
                 </div>
               </section>
 
+              <section class="card wide soundsCard">
+                <div class="soundsHeader">
+                  <h2>Sounds</h2>
+                  <label class="toggleSwitch">
+                    <input id="soundMasterToggle" type="checkbox" checked />
+                    <span class="toggleTrack"></span>
+                  </label>
+                </div>
+                <div class="soundsVolRow">
+                  <span class="soundsVolLabel">Volume</span>
+                  <input id="soundVolumeSlider" type="range" min="0" max="100" value="90" class="volumeSlider" />
+                  <span id="soundVolumeValue" class="soundsVolValue">90%</span>
+                </div>
+                <div id="soundEventsList" class="soundEventsList"></div>
+              </section>
+
               <section class="card wide">
                 <h2>Advanced</h2>
                 <div class="row">
-                  <label class="field">
-                    <span>Sounds</span>
-                    <label class="checkRow">
-                      <input id="soundToggle" type="checkbox" />
-                      <span>Enable sounds for startup, receive, and send</span>
-                    </label>
-                  </label>
                   <label class="field">
                     <span>Help popups</span>
                     <label class="checkRow">
@@ -301,38 +318,54 @@
       <dialog id="sendDialog" class="dialog">
         <form method="dialog" class="dialogBody">
           <h3>Send</h3>
-          <div class="sendBalanceInfo">
-            <div>Balance: <span id="sendBalanceTotal">—</span></div>
-            <div>Unlocked (spendable): <span id="sendBalanceUnlocked">—</span></div>
-            <div>Max after fee (0.01 ZANO): <span id="sendBalanceMax">—</span></div>
-          </div>
-          <label class="field">
-            <span>To address</span>
-            <input id="sendAddress" type="text" placeholder="Zx… or iZ…" />
-          </label>
-          <label class="field">
-            <span>Amount (ZANO)</span>
-            <div class="addressRow">
-              <!-- Use step=\"any\" to avoid browser validation popups; JS still clamps to 0.1 increments and max spendable. -->
-              <input id="sendAmount" type="number" min="0" step="any" placeholder="0.00" data-tooltip="How much ZANO to send from this wallet." />
-              <button id="btnSendMax" class="btn" type="button" data-busy-disable data-tooltip="Fill in the maximum spendable amount after fees.">Max</button>
+
+          <div id="sendEntrySection">
+            <label class="field">
+              <span>Asset *</span>
+              <div id="sendAssetSelect"></div>
+            </label>
+            <div class="sendBalanceInfo">
+              <div>Balance: <span id="sendBalanceTotal">—</span></div>
+              <div>Unlocked (spendable): <span id="sendBalanceUnlocked">—</span></div>
+              <div>Max after fee (0.01 ZANO): <span id="sendBalanceMax">—</span></div>
+              <div id="sendFeeReserve" class="hint"></div>
             </div>
-          </label>
-          <div class="hint">Fee is 0.01 ZANO and is burned.</div>
-          <pre class="log" id="sendLog"></pre>
-          <div class="row">
-            <button class="btn" value="cancel" data-tooltip="Close the send window without sending.">Close</button>
-            <button id="btnSend" class="btn primary" type="button" data-busy-disable data-tooltip="Submit this transaction to the network.">Send</button>
+            <label class="field">
+              <span>To address</span>
+              <input id="sendAddress" type="text" placeholder="Zx… or iZ…" />
+            </label>
+            <label class="field">
+              <span>Amount (<span id="sendAmountTicker">ZANO</span>)</span>
+              <div class="addressRow">
+                <div class="amountInputWrap">
+                  <input id="sendAmount" type="number" min="0" step="any" placeholder="0.00" data-tooltip="How much to send from this wallet." />
+                  <button id="btnSendAmountMode" class="pillBtn" type="button" title="Toggle USD/ZANO input">ZANO</button>
+                </div>
+                <button id="btnSendMax" class="btn" type="button" data-busy-disable data-tooltip="Fill in the maximum spendable amount after fees.">Max</button>
+              </div>
+              <div id="sendAmountEq" class="hint"></div>
+            </label>
+            <div class="hint">Fee is 0.01 ZANO and is burned.</div>
+            <pre class="log" id="sendLog"></pre>
+            <div class="row">
+              <button class="btn" value="cancel" data-tooltip="Close the send window without sending.">Close</button>
+              <button id="btnSend" class="btn primary" type="button" data-busy-disable data-tooltip="Submit this transaction to the network.">Send</button>
+            </div>
           </div>
+
         </form>
       </dialog>
 
       <dialog id="receiveDialog" class="dialog">
         <form method="dialog" class="dialogBody">
           <h3>Receive</h3>
+          <div class="recvAssetRow">
+            <span id="recvAssetIcon" class="assetContextIconWrap"></span>
+            <div class="hint" id="recvAssetContext">Send ZANO to this address.</div>
+          </div>
           <div class="kicker">Your address</div>
           <div class="addressRow">
-            <input id="recvAddress" class="addressInput" readonly placeholder="—" data-tooltip="Your wallet address for receiving ZANO." />
+            <input id="recvAddress" class="addressInput" readonly placeholder="—" data-tooltip="Your wallet address for receiving funds." />
             <button id="btnCopyRecvAddress" class="btn" type="button" data-tooltip="Copy your receiving address to the clipboard.">Copy</button>
           </div>
           <div class="qrWrap">
@@ -399,8 +432,11 @@
         <div class="txTop">
           <div class="txMain">
             <div class="txDir"></div>
-            <div>
-              <div class="txAmount"></div>
+            <div class="txText">
+              <div class="txLine">
+                <div class="txAmount"></div>
+                <div class="txTime"></div>
+              </div>
               <div class="txMeta"></div>
             </div>
           </div>

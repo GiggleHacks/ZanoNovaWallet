@@ -1,9 +1,13 @@
 import { createLogger } from "./logger.js";
 import { $, setText, appendLog, makeHint } from "./dom.js";
 import { state, getSessionPassword } from "./state.js";
-import { atomicToZanoString, getMaxSendableAtomic } from "./currency.js";
+import { atomicToZanoString, atomicToDisplayString, getMaxSendableAtomic } from "./currency.js";
 import {
   ZANO_ASSET_ID,
+  FUSD_ASSET_ID,
+  KNOWN_ASSETS,
+  FUSD_LOGO_URL,
+  ZANO_LOGO_URL,
   HISTORY_PAGE_SIZE,
   CONFIRMATION_THRESHOLD,
   EXPLORER_TX_URL,
@@ -89,6 +93,21 @@ export async function walletRpc(method, params) {
   }
   log.debug("←", method, "ok");
   return res.data;
+}
+
+// ---------------------------------------------------------------------------
+// Asset whitelist
+// ---------------------------------------------------------------------------
+
+export async function ensureAssetWhitelisted(assetId) {
+  const wl = await walletRpc("assets_whitelist_get", {});
+  const lists = [
+    ...(wl?.result?.global_whitelist ?? []),
+    ...(wl?.result?.local_whitelist ?? []),
+    ...(wl?.result?.own_assets ?? []),
+  ];
+  if (lists.some(d => d.asset_id === assetId)) return;
+  await walletRpc("assets_whitelist_add", { asset_id: assetId });
 }
 
 // ---------------------------------------------------------------------------
@@ -180,27 +199,327 @@ export async function stopWalletRpc() {
 // Balance display
 // ---------------------------------------------------------------------------
 
-export function renderZanoHeaderBalanceFromGetbalance(res) {
-  const balances = res?.result?.balances || [];
-  const zano  = balances.find((b) => b?.asset_info?.asset_id === ZANO_ASSET_ID) || balances[0] || null;
-  const balEl = $("zanoBalance");
-  const subEl = $("zanoBalanceSub");
-  if (!balEl || !subEl) return;
+function populateBalanceMaps(balances) {
+  state.balancesById.clear();
+  state.assetsById.clear();
+  for (const b of balances) {
+    const ai = b.asset_info || {};
+    const assetId = ai.asset_id || "";
+    if (!assetId) continue;
+    const dp = typeof ai.decimal_point === "number" ? ai.decimal_point : 12;
+    const ticker = ai.ticker || KNOWN_ASSETS[assetId]?.ticker || "ASSET";
+    const fullName = ai.full_name || ticker;
+    state.assetsById.set(assetId, { ticker, fullName, decimalPoint: dp });
+    try {
+      state.balancesById.set(assetId, {
+        totalAtomic:      BigInt(b.total ?? 0),
+        unlockedAtomic:   BigInt(b.unlocked ?? 0),
+        awaitingInAtomic: BigInt(b.awaiting_in ?? 0),
+        awaitingOutAtomic:BigInt(b.awaiting_out ?? 0),
+        assetInfo:        ai,
+      });
+    } catch { /* skip malformed entries */ }
+  }
+  for (const [id, ka] of Object.entries(KNOWN_ASSETS)) {
+    if (!state.assetsById.has(id)) {
+      state.assetsById.set(id, { ticker: ka.ticker, fullName: ka.fullName ?? ka.ticker, decimalPoint: ka.decimalPoint });
+    }
+  }
+  const zanoBal = state.balancesById.get(ZANO_ASSET_ID);
+  state.lastZanoUnlockedAtomic = zanoBal?.unlockedAtomic ?? null;
+  state.lastZanoTotalAtomic    = zanoBal?.totalAtomic ?? null;
+}
 
-  if (!zano) {
-    state.lastZanoUnlockedAtomic = null;
-    state.lastZanoTotalAtomic    = null;
-    setText(balEl, "—");
-    setText(subEl, "Unlocked: —");
-    return;
+/** Returns logo URL for known assets, or null for unknowns (placeholder). */
+function getAssetLogoUrl(assetId) {
+  if (assetId === FUSD_ASSET_ID) return FUSD_LOGO_URL;
+  if (assetId === ZANO_ASSET_ID) return ZANO_LOGO_URL;
+  return null;
+}
+
+/** Build one option row: icon + label + radio. */
+function createOptionRow(option, selected, onSelect) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "assetOption" + (selected ? " selected" : "");
+  row.setAttribute("data-value", option.value);
+
+  const iconEl = option.logoUrl
+    ? Object.assign(document.createElement("img"), { src: option.logoUrl, alt: "", className: "assetOptionIcon" })
+    : Object.assign(document.createElement("span"), { textContent: "Z", className: "assetOptionIcon zanoPlaceholder" });
+  const labelEl = document.createElement("span");
+  labelEl.className = "assetOptionLabel";
+  labelEl.textContent = option.label;
+  const radioEl = document.createElement("span");
+  radioEl.className = "assetOptionRadio";
+
+  row.append(iconEl, labelEl, radioEl);
+  row.addEventListener("click", () => onSelect(option.value));
+  return row;
+}
+
+/** Build trigger content: icon + label for current selection. */
+function renderTriggerContent(trigger, option) {
+  trigger.replaceChildren();
+  if (option.logoUrl) {
+    const img = document.createElement("img");
+    img.src = option.logoUrl;
+    img.alt = "";
+    img.className = "assetTriggerIcon";
+    trigger.appendChild(img);
+  } else {
+    const span = document.createElement("span");
+    span.className = "assetTriggerIcon zanoPlaceholder";
+    span.textContent = "Z";
+    trigger.appendChild(span);
+  }
+  const label = document.createElement("span");
+  label.className = "assetTriggerLabel";
+  label.textContent = option.label;
+  trigger.appendChild(label);
+}
+
+/** Build custom asset dropdown (balance/send: asset list; history: All/ZANO/fUSD). */
+function buildAssetDropdown(wrapperEl) {
+  if (!wrapperEl || wrapperEl.tagName === "SELECT") return;
+  const id = wrapperEl.id;
+  const isHistory = id === "historyAssetFilter";
+  const isSend = id === "sendAssetSelect";
+
+  const options = [];
+  if (isHistory) {
+    options.push({ value: "all", label: "All", logoUrl: null });
+    options.push({
+      value: ZANO_ASSET_ID,
+      label: "Zano",
+      logoUrl: null,
+    });
+    options.push({
+      value: FUSD_ASSET_ID,
+      label: "Freedom Dollar (fUSD)",
+      logoUrl: FUSD_LOGO_URL,
+    });
+  } else {
+    const ids = new Set([...state.balancesById.keys(), ...Object.keys(KNOWN_ASSETS)]);
+    for (const assetId of ids) {
+      const info = state.assetsById.get(assetId) || KNOWN_ASSETS[assetId] || {};
+      const fullName = info.fullName || info.ticker || assetId.slice(0, 8);
+      const ticker = info.ticker || "ASSET";
+      const dp = info.decimalPoint ?? 12;
+      const entry = state.balancesById.get(assetId);
+      const amount = entry ? atomicToDisplayString(entry.unlockedAtomic, dp) : "0";
+      options.push({
+        value: assetId,
+        label: `${fullName} (${amount} ${ticker})`,
+        logoUrl: getAssetLogoUrl(assetId),
+      });
+    }
   }
 
-  const dp = typeof zano?.asset_info?.decimal_point === "number" ? zano.asset_info.decimal_point : 12;
-  try { state.lastZanoUnlockedAtomic = BigInt(zano.unlocked ?? 0); } catch { state.lastZanoUnlockedAtomic = null; }
-  try { state.lastZanoTotalAtomic    = BigInt(zano.total    ?? 0); } catch { state.lastZanoTotalAtomic    = null; }
+  const currentValue = isHistory ? (state.historyAssetFilter || "all") : state.selectedAssetId;
+  const currentOption = options.find((o) => o.value === currentValue) || options[0];
 
-  setText(balEl, `${atomicToZanoString(zano.total    ?? 0, dp)} ZANO`);
-  setText(subEl, `Unlocked: ${atomicToZanoString(zano.unlocked ?? 0, dp)} ZANO`);
+  wrapperEl.className = "assetDropdownWrapper";
+  wrapperEl.replaceChildren();
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "assetDropdownTrigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  renderTriggerContent(trigger, currentOption);
+
+  const panel = document.createElement("div");
+  panel.className = "assetDropdownPanel";
+  panel.setAttribute("role", "listbox");
+  panel.hidden = true;
+  function setSelectedInPanel(value) {
+    panel.querySelectorAll(".assetOption").forEach((row) => {
+      row.classList.toggle("selected", row.getAttribute("data-value") === value);
+    });
+  }
+  for (const opt of options) {
+    panel.appendChild(createOptionRow(opt, opt.value === currentValue, (value) => {
+      if (isHistory) {
+        state.historyAssetFilter = value;
+        setSelectedInPanel(value);
+        trigger.setAttribute("aria-expanded", "false");
+        panel.hidden = true;
+        const chosen = options.find((o) => o.value === value);
+        if (chosen) renderTriggerContent(trigger, chosen);
+        wrapperEl.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        state.selectedAssetId = value;
+        setSelectedInPanel(value);
+        trigger.setAttribute("aria-expanded", "false");
+        panel.hidden = true;
+        const chosen = options.find((o) => o.value === value);
+        if (chosen) renderTriggerContent(trigger, chosen);
+        wrapperEl.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }));
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !panel.hidden;
+    panel.hidden = open;
+    trigger.setAttribute("aria-expanded", String(!open));
+  });
+
+  function close(e) {
+    if (e && wrapperEl.contains(e.target)) return;
+    panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", close);
+  }
+  document.addEventListener("click", close);
+  wrapperEl._dropdownClose = () => document.removeEventListener("click", close);
+
+  wrapperEl.appendChild(trigger);
+  wrapperEl.appendChild(panel);
+}
+
+export function populateAssetSelector(selectOrWrapperEl) {
+  if (!selectOrWrapperEl) return;
+  if (selectOrWrapperEl.tagName === "SELECT") {
+    const prev = selectOrWrapperEl.value;
+    selectOrWrapperEl.replaceChildren();
+    const ids = new Set([...state.balancesById.keys(), ...Object.keys(KNOWN_ASSETS)]);
+    for (const id of ids) {
+      const info = state.assetsById.get(id) || KNOWN_ASSETS[id] || {};
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = info.ticker || id.slice(0, 8);
+      selectOrWrapperEl.appendChild(opt);
+    }
+    if ([...ids].includes(prev)) selectOrWrapperEl.value = prev;
+    else selectOrWrapperEl.value = state.selectedAssetId;
+    return;
+  }
+  if (selectOrWrapperEl._dropdownClose) {
+    selectOrWrapperEl._dropdownClose();
+    selectOrWrapperEl._dropdownClose = null;
+  }
+  buildAssetDropdown(selectOrWrapperEl);
+}
+
+const HEADER_SNAPSHOT_LS_KEY = "zano_wallet_header_snapshot";
+
+export function renderHeaderBalance() {
+  const totalEl   = $("totalUsdBalance");
+  const zanoAmtEl = $("breakdownZanoAmt");
+  const zanoPctEl = $("breakdownZanoChange");
+  const fusdRow   = $("breakdownFusd");
+  const fusdAmtEl = $("breakdownFusdAmt");
+  if (!totalEl) return;
+
+  // Prefer the decimal_point reported by the RPC (state.assetsById) over the
+  // hardcoded KNOWN_ASSETS value — the RPC value is the on-chain ground truth.
+  const zanoDp = state.assetsById.get(ZANO_ASSET_ID)?.decimalPoint
+              ?? KNOWN_ASSETS[ZANO_ASSET_ID]?.decimalPoint ?? 12;
+  const fusdDp = state.assetsById.get(FUSD_ASSET_ID)?.decimalPoint
+              ?? KNOWN_ASSETS[FUSD_ASSET_ID]?.decimalPoint ?? 12;
+
+  const zanoEntry = state.balancesById.get(ZANO_ASSET_ID);
+  const fusdEntry = state.balancesById.get(FUSD_ASSET_ID);
+
+  const zanoDisplayStr = zanoEntry
+    ? atomicToDisplayString(zanoEntry.totalAtomic, zanoDp)
+    : "0";
+  const fusdDisplayStr = fusdEntry
+    ? atomicToDisplayString(fusdEntry.totalAtomic, fusdDp)
+    : "0";
+
+  const zanoNum = parseFloat(zanoDisplayStr) || 0;
+  const fusdNum = parseFloat(fusdDisplayStr) || 0;
+
+  const prices = state.usdPrices;
+  const zanoPriceUsd = prices?.ZANO?.usd ?? null;
+  const changePct24  = prices?.ZANO?.changePct24 ?? null;
+
+  // total_usd = (ZANO_balance * ZANO_price) + FUSD_balance (1:1 USD)
+  // Show total even when price API fails if we still have an fUSD balance.
+  const zanoUsd = zanoPriceUsd != null ? zanoNum * zanoPriceUsd : null;
+  let totalUsdDisplay = "—";
+  if (zanoUsd != null) {
+    totalUsdDisplay = formatUsd(zanoUsd + fusdNum);
+    setText(totalEl, totalUsdDisplay);
+  } else if (fusdNum > 0) {
+    totalUsdDisplay = formatUsd(fusdNum);
+    setText(totalEl, totalUsdDisplay);
+  } else {
+    setText(totalEl, "—");
+  }
+
+  if (zanoAmtEl) {
+    setText(zanoAmtEl, zanoEntry ? `${zanoDisplayStr} ZANO` : "— ZANO");
+  }
+
+  if (zanoPctEl) {
+    if (changePct24 != null) {
+      const sign = changePct24 >= 0 ? "+" : "";
+      zanoPctEl.textContent = `${sign}${changePct24.toFixed(2)}%`;
+      zanoPctEl.className = "changePct " + (changePct24 >= 0 ? "pctUp" : "pctDown");
+    } else {
+      zanoPctEl.textContent = "";
+      zanoPctEl.className = "changePct";
+    }
+  }
+
+  if (fusdRow && fusdAmtEl) {
+    if (fusdNum > 0) {
+      setText(fusdAmtEl, `${fusdDisplayStr} fUSD`);
+      fusdRow.style.display = "";
+    } else {
+      fusdRow.style.display = "none";
+    }
+  }
+
+  // Persist a lightweight snapshot so we can show something immediately on
+  // next launch before the backend finishes loading.
+  try {
+    const snapshot = {
+      totalUsd: totalUsdDisplay,
+      zano: zanoEntry ? `${zanoDisplayStr} ZANO` : null,
+      fusd: fusdNum > 0 ? `${fusdDisplayStr} fUSD` : null,
+      hasFusd: fusdNum > 0,
+      ts: Date.now(),
+    };
+    localStorage.setItem(HEADER_SNAPSHOT_LS_KEY, JSON.stringify(snapshot));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function renderHeaderBalanceFromCache() {
+  const totalEl   = $("totalUsdBalance");
+  const zanoAmtEl = $("breakdownZanoAmt");
+  const fusdRow   = $("breakdownFusd");
+  const fusdAmtEl = $("breakdownFusdAmt");
+  if (!totalEl) return;
+  try {
+    const raw = localStorage.getItem(HEADER_SNAPSHOT_LS_KEY);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    if (!snap || typeof snap !== "object") return;
+    if (snap.totalUsd) setText(totalEl, snap.totalUsd);
+    if (zanoAmtEl && snap.zano) setText(zanoAmtEl, snap.zano);
+    if (fusdRow && fusdAmtEl) {
+      if (snap.hasFusd && snap.fusd) {
+        setText(fusdAmtEl, snap.fusd);
+        fusdRow.style.display = "";
+      } else {
+        fusdRow.style.display = "none";
+      }
+    }
+  } catch {
+    // ignore cache issues
+  }
+}
+
+function formatUsd(n) {
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function renderBalances(balances) {
@@ -215,7 +534,7 @@ export function renderBalances(balances) {
   for (const b of balances) {
     const ai          = b.asset_info || {};
     const assetId     = ai.asset_id || "";
-    const ticker      = ai.ticker || (assetId === ZANO_ASSET_ID ? "ZANO" : "ASSET");
+    const ticker      = ai.ticker || KNOWN_ASSETS[assetId]?.ticker || (assetId === ZANO_ASSET_ID ? "ZANO" : "ASSET");
     const dp          = typeof ai.decimal_point === "number" ? ai.decimal_point : 12;
     const total       = b.total       ?? 0;
     const unlocked    = b.unlocked    ?? 0;
@@ -237,7 +556,8 @@ export function renderHistory(result) {
   const root = $("history");
   if (!root) return;
   const transfers = result?.transfers || [];
-  const curHeight = result?.pi?.curent_height ?? null;
+  const curHeight = result?.pi?.curent_height ?? result?.pi?.current_height ?? null;
+
   if (!transfers.length) {
     root.replaceChildren(makeHint("No transactions (or not synced yet)."));
     return;
@@ -255,55 +575,76 @@ export function renderHistory(result) {
         confirmations = 0;
       }
     }
-    const isPending    = confirmations < CONFIRMATION_THRESHOLD;
-    const subs         = Array.isArray(t.subtransfers) ? t.subtransfers : [];
-    const native       = subs.find((s) => s.asset_id === ZANO_ASSET_ID) || subs[0] || {};
-    const amountAtomic = native.amount ?? 0;
-    const isIncome     = native.is_income ?? false;
-    const ts           = t.timestamp ? new Date(Number(t.timestamp) * 1000).toLocaleString() : "";
-    const statusLabel  = isIncome ? "Received" : "Sent";
-    const txHash       = t.tx_hash || "";
-    const confCount    = confirmations ?? 0;
-    const confDisplay  = Math.min(confCount, CONFIRMATION_THRESHOLD);
-    const confLabel    = confCount >= CONFIRMATION_THRESHOLD
+    const isPending = confirmations < CONFIRMATION_THRESHOLD;
+    const subs      = Array.isArray(t.subtransfers) ? t.subtransfers : [];
+
+    const displaySubs = subs;
+    const primarySub = displaySubs[0] || {};
+    const isIncome   = primarySub.is_income ?? false;
+
+    const amountParts = displaySubs.map(s => {
+      const aid = s.asset_id || "";
+      const subInfo = state.assetsById.get(aid) || KNOWN_ASSETS[aid] || {};
+      const subTicker = subInfo.ticker || aid.slice(0, 8);
+      const subDp = subInfo.decimalPoint ?? 12;
+      return `${atomicToDisplayString(s.amount ?? 0, subDp)} ${subTicker}`;
+    });
+
+    const ts = t.timestamp
+      ? new Date(Number(t.timestamp) * 1000).toLocaleString(undefined, {
+          year: "2-digit",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        })
+      : "";
+    const statusLabel = isIncome ? "Received" : "Sent";
+    const txHash      = t.tx_hash || "";
+    const confCount   = confirmations ?? 0;
+    const confDisplay = Math.min(confCount, CONFIRMATION_THRESHOLD);
+    const confLabel   = confCount >= CONFIRMATION_THRESHOLD
       ? `Confirmations ${CONFIRMATION_THRESHOLD}+ (confirmed)`
       : `Confirmations ${confDisplay}/${CONFIRMATION_THRESHOLD}`;
-    const paymentId  = t.payment_id || "";
+    const paymentId   = t.payment_id || "";
     const explorerUrl = txHash ? `${EXPLORER_TX_URL}${txHash}` : "";
 
     const el = tmpl.cloneNode(true).firstElementChild;
     const dirEl = el.querySelector(".txDir");
     dirEl.textContent = isIncome ? "↓" : "↑";
     dirEl.classList.add(isIncome ? "in" : "out");
-    el.querySelector(".txAmount").textContent = `${atomicToZanoString(amountAtomic)} ZANO`;
+    el.querySelector(".txAmount").textContent = amountParts.join(" + ");
+    const timeEl = el.querySelector(".txTime");
+    if (timeEl) timeEl.textContent = ts;
     el.querySelector(".txMeta").textContent   = statusLabel;
     const circleEl = el.querySelector(".confCircle");
     circleEl.classList.add(isPending ? "pending" : "done");
     circleEl.title = confLabel;
     el.querySelector(".confLabel").textContent = `${confDisplay}/${CONFIRMATION_THRESHOLD}`;
-    // Build hint line: "timestamp · <explorer link>" without innerHTML
     const hintEl = el.querySelector(".txHint");
-    if (paymentId && explorerUrl) {
-      hintEl.append(`${ts} · `);
+    if (hintEl) hintEl.replaceChildren();
+    // Timestamp is displayed on the top line now; keep hint line only for
+    // optional Payment ID link.
+    if (hintEl && paymentId && explorerUrl) {
       const a = document.createElement("a");
       a.href = explorerUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.textContent = paymentId;
       hintEl.appendChild(a);
-    } else {
-      hintEl.append(ts);
     }
     const hashEl = el.querySelector(".hash");
+    const displayHash = txHash ? txHash.slice(0, 13) + (txHash.length > 13 ? "…" : "") : "";
     if (txHash && explorerUrl) {
       const a = document.createElement("a");
       a.href = explorerUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
-      a.textContent = txHash;
+      a.textContent = displayHash;
       hashEl.appendChild(a);
     } else {
-      hashEl.textContent = txHash;
+      hashEl.textContent = displayHash;
     }
 
     const showCopyToast = (btn, text) => {
@@ -344,17 +685,35 @@ export function updateSendDialogBalances() {
   const totalEl    = $("sendBalanceTotal");
   const unlockedEl = $("sendBalanceUnlocked");
   const maxEl      = $("sendBalanceMax");
+  const feeEl      = $("sendFeeReserve");
   if (!totalEl || !unlockedEl || !maxEl) return;
-  if (state.lastZanoTotalAtomic == null && state.lastZanoUnlockedAtomic == null) {
+
+  const id = state.selectedAssetId;
+  const entry = state.balancesById.get(id);
+  const info = state.assetsById.get(id) || KNOWN_ASSETS[id] || {};
+  const ticker = info.ticker || "ASSET";
+  const dp = info.decimalPoint ?? 12;
+
+  if (!entry) {
     setText(totalEl, "—"); setText(unlockedEl, "—"); setText(maxEl, "—");
+    if (feeEl) setText(feeEl, "");
     return;
   }
-  const total    = state.lastZanoTotalAtomic    ?? state.lastZanoUnlockedAtomic ?? 0n;
-  const unlocked = state.lastZanoUnlockedAtomic ?? 0n;
-  const max      = getMaxSendableAtomic();
-  setText(totalEl,    `${atomicToZanoString(total)} ZANO`);
-  setText(unlockedEl, `${atomicToZanoString(unlocked)} ZANO`);
-  setText(maxEl, max != null ? `${atomicToZanoString(max)} ZANO` : "—");
+
+  const max = getMaxSendableAtomic(id);
+  setText(totalEl,    `${atomicToDisplayString(entry.totalAtomic, dp)} ${ticker}`);
+  setText(unlockedEl, `${atomicToDisplayString(entry.unlockedAtomic, dp)} ${ticker}`);
+  setText(maxEl, max != null ? `${atomicToDisplayString(max, dp)} ${ticker}` : "—");
+
+  if (feeEl) {
+    if (id !== ZANO_ASSET_ID) {
+      const zanoBal = state.balancesById.get(ZANO_ASSET_ID);
+      const zanoUnlocked = zanoBal?.unlockedAtomic ?? 0n;
+      setText(feeEl, `ZANO fee reserve: ${atomicToDisplayString(zanoUnlocked, 12)} ZANO`);
+    } else {
+      setText(feeEl, "");
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +723,8 @@ export function updateSendDialogBalances() {
 export async function refreshBalance() {
   const res      = await walletRpc("getbalance", {});
   const balances = res?.result?.balances || [];
-  renderZanoHeaderBalanceFromGetbalance(res);
+  populateBalanceMaps(balances);
+  renderHeaderBalance();
   if ($("balances")) renderBalances(balances);
 }
 
@@ -382,20 +742,54 @@ export async function refreshHistory(page = state.historyPage) {
   const transfers = result?.transfers || [];
   const hasNext   = transfers.length === HISTORY_PAGE_SIZE;
 
+  // "New income" detection:
+  // - Must trigger even for unconfirmed txs.
+  // - Should trigger when a *new* incoming transfer is first observed by the UI,
+  //   including the first time it appears after unlock.
+  const LS_LAST_INCOME_TS_KEY = "zano_wallet_last_income_ts";
+  let lastIncomeTs = 0;
+  try {
+    const v = Number(localStorage.getItem(LS_LAST_INCOME_TS_KEY));
+    lastIncomeTs = Number.isFinite(v) ? v : 0;
+  } catch { /* ignore */ }
+  // If we have no baseline yet, treat "recent" incoming txs as new (avoids
+  // missing the user's first test payment on a fresh install).
+  if (!lastIncomeTs) lastIncomeTs = Math.floor(Date.now() / 1000) - 120;
+
   let hasNewIncome = false;
+  let maxIncomeTs = 0;
   for (const t of transfers) {
     const subs      = Array.isArray(t.subtransfers) ? t.subtransfers : [];
-    const hasIncome = subs.some((s) => s.asset_id === ZANO_ASSET_ID && s.is_income);
+    const hasIncome = subs.some((s) => s.is_income);
     if (!hasIncome) continue;
     const hash = t.tx_hash
       || `pending:${t.payment_id ?? ""}:${t.timestamp ?? ""}:${subs.map((s) => `${s.amount ?? ""}_${s.is_income}`).join(",")}`;
     if (!state.knownIncomeTxs.has(hash)) {
       state.knownIncomeTxs.add(hash);
-      if (state.historyInitialized) hasNewIncome = true;
+      const ts = Number(t.timestamp) || 0;
+      // Some unconfirmed/mempool transfers may not have a reliable timestamp.
+      // Treat "timestamp missing/0" as new so the UI still reacts immediately.
+      if ((ts && ts > lastIncomeTs) || ts === 0) hasNewIncome = true;
     }
+    const ts = Number(t.timestamp) || 0;
+    if (ts && ts > maxIncomeTs) maxIncomeTs = ts;
   }
   if (!state.historyInitialized) state.historyInitialized = true;
-  if (hasNewIncome) playReceiveSound();
+  if (hasNewIncome) {
+    playReceiveSound();
+    try {
+      const target = document.getElementById("app") || document.getElementById("walletView");
+      if (target) {
+        target.classList.remove("recvGlow");
+        // Force reflow so repeated receives retrigger animation.
+        void target.offsetWidth;
+        target.classList.add("recvGlow");
+      }
+    } catch { /* ignore */ }
+  }
+  if (maxIncomeTs) {
+    try { localStorage.setItem(LS_LAST_INCOME_TS_KEY, String(maxIncomeTs)); } catch {}
+  }
   renderHistory(result);
   updateHistoryPager(page, hasNext);
 }
@@ -454,13 +848,22 @@ export async function loadSettingsIntoDialog() {
   const bindIp   = $("cfgBindIp");
   const bindPort = $("cfgBindPort");
   // Placeholders show the effective default so users know what a blank field means.
-  daemon.placeholder   = DEFAULT_DAEMON_ADDRESS;
-  bindIp.placeholder   = DEFAULT_RPC_BIND_IP;
-  bindPort.placeholder = String(DEFAULT_RPC_BIND_PORT);
-  daemon.value   = cfg.daemonAddress     || "";
-  bindIp.value   = cfg.walletRpcBindIp   || "";
-  bindPort.value = cfg.walletRpcBindPort || "";
-  $("cfgExe").value = (cfg.simplewalletExePath || "").trim();
+  if (daemon) {
+    daemon.placeholder = DEFAULT_DAEMON_ADDRESS;
+    daemon.value = cfg.daemonAddress || "";
+  }
+  if (bindIp) {
+    bindIp.placeholder = DEFAULT_RPC_BIND_IP;
+    bindIp.value = cfg.walletRpcBindIp || "";
+  }
+  if (bindPort) {
+    bindPort.placeholder = String(DEFAULT_RPC_BIND_PORT);
+    bindPort.value = cfg.walletRpcBindPort || "";
+  }
+  const exe = $("cfgExe");
+  if (exe) {
+    exe.value = (cfg.simplewalletExePath || "").trim();
+  }
 }
 
 export async function saveSettingsFromDialog() {
