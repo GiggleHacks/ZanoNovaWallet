@@ -124,7 +124,7 @@ Output goes to `dist/`.
 By default, Zano Nova connects to a public mainnet node:
 
 ```
-Daemon: 37.27.100.59:10500
+Daemon: 64.111.93.25:10500
 RPC:    127.0.0.1:12233
 ```
 

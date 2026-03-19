@@ -90,6 +90,6 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  sw.stopSimplewallet();
-});
+// simplewallet is intentionally left running between sessions so the next
+// launch can reuse it instantly via the port-detection logic in ipc.js.
+// The user can stop it explicitly with the "Stop backend" button.

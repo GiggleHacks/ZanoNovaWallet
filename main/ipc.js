@@ -251,6 +251,28 @@ ipcMain.handle("wallet:showSeed", async (_evt, input) => {
 });
 
 // ---------------------------------------------------------------------------
+// Daemon health check (no wallet needed — used for pre-connect preflight)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle("daemon:getinfo", async (_evt, input) => {
+  const cfg = getConfig();
+  const addr = (input?.daemonAddress || cfg.daemonAddress || "").trim();
+  if (!addr) return { ok: false, error: "No daemon address" };
+  const url = `http://${addr}/getinfo`;
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), 5000);
+  try {
+    const res = await fetch(url, { signal: ac.signal });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok && data.status === "OK", height: data.height, status: data.status };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  } finally {
+    clearTimeout(to);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // JSON-RPC proxy
 // ---------------------------------------------------------------------------
 
@@ -316,6 +338,112 @@ ipcMain.handle("dialog:saveWallet", async () => {
     filters: [{ name: "Zano wallet", extensions: ["zan"] }],
   });
   return result.canceled ? null : result.filePath;
+});
+
+// ---------------------------------------------------------------------------
+// Swap (Exolix)
+// ---------------------------------------------------------------------------
+
+const EXOLIX_API_BASE = "https://exolix.com/api/v2";
+
+const SWAP_TICKER_MAP = {
+  ZANO: { coin: "ZANO", network: "ZANO" },
+  fUSD: { coin: "FUSD", network: "ZANO" },
+  FUSD: { coin: "FUSD", network: "ZANO" },
+};
+
+function exolixHeaders() {
+  const cfg = getConfig();
+  const h = { Accept: "application/json", "Content-Type": "application/json" };
+  if (cfg.exolixApiKey) h.Authorization = cfg.exolixApiKey;
+  return h;
+}
+
+ipcMain.handle("swap:rate", async (_evt, input) => {
+  const { from, to, amount, rateType } = input || {};
+  const f = SWAP_TICKER_MAP[from];
+  const t = SWAP_TICKER_MAP[to];
+  if (!f || !t) throw new Error(`Unsupported pair: ${from} -> ${to}`);
+
+  const params = new URLSearchParams({
+    coinFrom: f.coin, networkFrom: f.network,
+    coinTo: t.coin, networkTo: t.network,
+    amount: String(amount || "1"),
+    rateType: rateType || "float",
+  });
+  const resp = await fetch(`${EXOLIX_API_BASE}/rate?${params}`, { headers: exolixHeaders() });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Exolix rate error (${resp.status}): ${text}`);
+  }
+  const data = await resp.json();
+  return {
+    toAmount: data.toAmount,
+    rate: data.rate,
+    minAmount: data.minAmount,
+    maxAmount: data.maxAmount,
+    fromAmount: data.fromAmount,
+    message: data.message || null,
+  };
+});
+
+ipcMain.handle("swap:exchange", async (_evt, input) => {
+  const { from, to, amount, withdrawalAddress, rateType, refundAddress } = input || {};
+  const f = SWAP_TICKER_MAP[from];
+  const t = SWAP_TICKER_MAP[to];
+  if (!f || !t) throw new Error(`Unsupported pair: ${from} -> ${to}`);
+  if (!withdrawalAddress) throw new Error("withdrawalAddress is required");
+
+  const resp = await fetch(`${EXOLIX_API_BASE}/transactions`, {
+    method: "POST",
+    headers: exolixHeaders(),
+    body: JSON.stringify({
+      coinFrom: f.coin, networkFrom: f.network,
+      coinTo: t.coin, networkTo: t.network,
+      amount,
+      withdrawalAddress,
+      withdrawalExtraId: "",
+      rateType: rateType || "float",
+      refundAddress: refundAddress || withdrawalAddress,
+      refundExtraId: "",
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Exolix exchange error (${resp.status}): ${text}`);
+  }
+  const data = await resp.json();
+  return {
+    id: data.id,
+    amount: data.amount,
+    amountTo: data.amountTo,
+    depositAddress: data.depositAddress,
+    depositExtraId: data.depositExtraId || null,
+    withdrawalAddress: data.withdrawalAddress,
+    rate: data.rate,
+    rateType: data.rateType,
+    status: data.status,
+  };
+});
+
+ipcMain.handle("swap:status", async (_evt, exchangeId) => {
+  if (!exchangeId) throw new Error("Missing exchange ID");
+  const resp = await fetch(`${EXOLIX_API_BASE}/transactions/${exchangeId}`, { headers: exolixHeaders() });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Exolix status error (${resp.status}): ${text}`);
+  }
+  const data = await resp.json();
+  return {
+    id: data.id,
+    amount: data.amount,
+    amountTo: data.amountTo,
+    status: data.status,
+    hashIn: data.hashIn || null,
+    hashOut: data.hashOut || null,
+    depositAddress: data.depositAddress,
+    withdrawalAddress: data.withdrawalAddress,
+  };
 });
 
 module.exports = { init };

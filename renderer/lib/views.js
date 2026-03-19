@@ -9,8 +9,8 @@ const log = createLogger("ui");
 let _tooltipEl = null;
 
 // View IDs follow the pattern: key + "View"  e.g. "wallet" -> "walletView"
-const VIEW_KEYS = ["wallet", "settings", "security", "welcome", "addWallet", "restoreWallet", "seedBackup"];
-const NAV_KEYS  = ["wallet", "settings", "security"];
+const VIEW_KEYS = ["wallet", "swap", "settings", "security", "welcome", "addWallet", "restoreWallet", "seedBackup"];
+const NAV_KEYS  = ["wallet", "swap", "settings", "security"];
 
 export function switchView(which) {
   log.info("view →", which);
@@ -66,6 +66,74 @@ export function setStatus(status) {
   if (btnStop)  btnStop.disabled  = !busy && status !== "stopping";
 }
 
+export function setConnectionStatus({ phase, nodeLabel, subtext, detail = "" }) {
+  const label = nodeLabel ? String(nodeLabel) : "node";
+  const resolvedSub = phase === "offline" ? (subtext || "—") : (subtext || label);
+
+  function applyTo(prefix) {
+    const dot  = $(prefix + "Dot");
+    const text = $(prefix + "Text");
+    const sub  = $(prefix + "Sub");
+    const wrap = $(prefix);
+    if (!dot || !text) return;
+
+    dot.classList.remove("ok", "warn", "bad");
+    if (wrap) wrap.classList.remove("status-connecting", "status-connected", "status-offline");
+    if (wrap) {
+      if (detail) wrap.dataset.connDetail = String(detail);
+      else delete wrap.dataset.connDetail;
+    }
+
+    if (phase === "connected") {
+      dot.classList.add("ok");
+      if (wrap) wrap.classList.add("status-connected");
+      setText(text, "Connected");
+      if (sub) setText(sub, resolvedSub);
+    } else if (phase === "connecting") {
+      dot.classList.add("warn");
+      if (wrap) wrap.classList.add("status-connecting");
+      setText(text, "Connecting");
+      if (sub) setText(sub, resolvedSub);
+    } else {
+      dot.classList.add("bad");
+      if (wrap) wrap.classList.add("status-offline");
+      setText(text, "Offline");
+      if (sub) setText(sub, resolvedSub);
+    }
+  }
+
+  // Topbar status
+  applyTo("swStatus");
+  // Unlock overlay status (if present)
+  applyTo("unlockStatus");
+
+  const btnStart = $("btnStartWallet");
+  const btnStop  = $("btnStopWallet");
+  const busy = phase === "connected" || phase === "connecting";
+  if (btnStart) btnStart.disabled = busy;
+  if (btnStop)  btnStop.disabled  = !busy;
+
+  setWalletUiGates(phase === "connected");
+}
+
+let _walletRpcReady = false;
+
+/**
+ * Gate wallet action buttons based on wallet RPC readiness.
+ * Send and Refresh require the wallet RPC to be live; Receive is always usable.
+ */
+export function setWalletUiGates(walletRpcReady) {
+  _walletRpcReady = walletRpcReady;
+  const send    = $("btnOpenSend");
+  const refresh = $("btnRefreshHistory");
+  if (send)    send.disabled    = !walletRpcReady;
+  if (refresh) refresh.disabled = !walletRpcReady;
+}
+
+export function isWalletRpcReady() {
+  return _walletRpcReady;
+}
+
 /**
  * Disable/enable all elements marked with [data-busy-disable] instead of
  * maintaining a hardcoded ID list.
@@ -77,6 +145,7 @@ export function setUiBusy(busy, reason = "") {
   for (const el of document.querySelectorAll("[data-busy-disable]")) {
     el.disabled = state.uiBusy;
   }
+  if (!state.uiBusy) setWalletUiGates(_walletRpcReady);
   const hint = $("swStatusText");
   if (hint && state.uiBusyReason) hint.title = state.uiBusyReason;
 }

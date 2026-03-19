@@ -2,12 +2,12 @@ import { createLogger } from "./lib/logger.js";
 import { $, setText, appendLog } from "./lib/dom.js";
 import { state, getSessionPassword, setSessionPassword } from "./lib/state.js";
 import { atomicToZanoString, getMaxSendableAtomic, parseAmountToAtomic, atomicToDisplayString } from "./lib/currency.js";
-import { ATOMIC_UNITS, AUTO_REFRESH_MS, FUSD_ASSET_ID, ZANO_ASSET_ID } from "./lib/constants.js";
+import { AUTO_REFRESH_MS, FUSD_ASSET_ID, ZANO_ASSET_ID, FEE_ATOMIC, MIXIN, KNOWN_ASSETS } from "./lib/constants.js";
 import { fetchPricesOnce } from "./lib/prices.js";
 import { prewarmSoundsIfNeeded, playStartupSoundOnce, SOUNDS, previewSound } from "./lib/audio.js";
-import { switchView, setStatus, setUiBusy, setupTooltips, hideTooltipIfVisible } from "./lib/views.js";
+import { switchView, setStatus, setConnectionStatus, setUiBusy, setupTooltips, hideTooltipIfVisible } from "./lib/views.js";
 import {
-  startWalletRpc, stopWalletRpc,
+  walletRpc, startWalletRpc, stopWalletRpc,
   refreshBalance, refreshHistory,
   clearWalletHistoryState, showUnlockOverlay,
   loadSettingsIntoDialog, saveSettingsFromDialog,
@@ -15,11 +15,90 @@ import {
   showBaseAddress, renderReceiveQr,
   updateSendDialogBalances, suggestWalletPath, getDefaultWalletPath,
   ensureAssetWhitelisted, renderHeaderBalance, renderHeaderBalanceFromCache, populateAssetSelector,
+  prewarmStartupCache,
 } from "./lib/wallet.js";
 import { send } from "./lib/send.js";
 import { showSeedBackupForWallet, viewSeedPhraseFlow, handleConfirmViewSeed } from "./lib/seed.js";
+import { checkHealth as swapHealthCheck, getRate as swapGetRate, createExchange, pollExchange } from "./lib/swap.js";
+import { initNeuralCanvas, startNeural, stopNeural } from "./lib/neural-canvas.js";
 
 const log = createLogger("init");
+
+/** Returns false and logs an error if the password pair is invalid. */
+function validatePasswords(pwd, pwd2, logEl) {
+  if (!pwd)        { appendLog(logEl, "Enter a wallet password."); return false; }
+  if (pwd !== pwd2) { appendLog(logEl, "Passwords do not match."); return false; }
+  return true;
+}
+
+async function getCurrentNodeLabel() {
+  try {
+    const cfg = await window.zano.configGet();
+    const addr = (cfg?.daemonAddress || "").trim();
+    if (!addr) return "node";
+    if (addr === "64.111.93.25:10500") return "ZanoNova Node";
+    if (addr === "37.27.100.59:10500") return "Zano.org Official Node";
+    return addr;
+  } catch {
+    return "node";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon preflight — runs before unlock to overlap network latency with
+// the user entering their password. Updates status UI progressively.
+// ---------------------------------------------------------------------------
+
+let _preflightAbort = false;
+
+function parseSimplewalletMilestone(stdoutTail, stderrTail) {
+  const out = String(stdoutTail || "");
+  const err = String(stderrTail || "");
+  const s = (out + "\n" + err).toLowerCase();
+  if (!s.trim()) return null;
+
+  // Order matters: pick the most informative/latest-stage milestone.
+  if (s.includes("wallet is getting fully resynced")) return { subtext: "Wallet resyncing…", detail: "wallet_resync" };
+  if (s.includes("detaching blockchain"))            return { subtext: "Wallet resyncing…", detail: "wallet_resync" };
+  if (s.includes("loading wallet"))                  return { subtext: "Loading wallet…", detail: "wallet_loading" };
+  if (s.includes("initializing wallet"))             return { subtext: "Initializing wallet…", detail: "wallet_loading" };
+  if (s.includes("starting in rpc server mode"))     return { subtext: "Starting wallet RPC…", detail: "wallet_starting" };
+  if (s.includes("daemon address"))                  return { subtext: "Connecting to daemon…", detail: "daemon_ok" };
+  return { subtext: "Starting wallet…", detail: "wallet_starting" };
+}
+
+async function startDaemonPreflight() {
+  _preflightAbort = false;
+  const nodeLabel = await getCurrentNodeLabel();
+  setConnectionStatus({ phase: "connecting", nodeLabel, subtext: "Checking daemon…", detail: "daemon_checking" });
+
+  while (!_preflightAbort) {
+    try {
+      const res = await window.zano.daemonGetinfo();
+      if (_preflightAbort) break;
+      if (res?.ok) {
+        setConnectionStatus({
+          phase: "connecting",
+          nodeLabel,
+          subtext: `Daemon reachable · height ${res.height}`,
+          detail: "daemon_ok",
+        });
+      } else {
+        // If the daemon isn't reachable at all, show Offline (accurate),
+        // and keep retrying quietly in the background.
+        setConnectionStatus({ phase: "offline", nodeLabel, subtext: "Daemon not reachable", detail: "daemon_bad" });
+      }
+    } catch {
+      if (_preflightAbort) break;
+      setConnectionStatus({ phase: "offline", nodeLabel, subtext: "Daemon not reachable", detail: "daemon_bad" });
+    }
+    await new Promise((r) => setTimeout(r, 4000));
+  }
+}
+
+function stopDaemonPreflight() {
+  _preflightAbort = true;
+}
 
 
 
@@ -38,21 +117,18 @@ async function unlockAndAutoStart() {
   setSessionPassword(pwd);
   pwdEl.value = "";
   $("unlockOverlay")?.classList.add("hidden");
+  stopNeural();
   switchView("wallet");
 
   // Immediately show last-known balances from previous session so the user
   // isn't staring at an empty header while the backend starts.
   renderHeaderBalanceFromCache();
 
-  setUiBusy(true, "Starting backend…");
+  // Don't freeze the entire UI while the backend syncs — show a live connection status instead.
   startWalletRpc(pwd)
     .then(async (result) => {
       if (result?.stopped) return; // intentional stop — no error
-      await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
-      await showBaseAddress().catch(() => {});
-      await refreshBalance().catch(() => {});
-      await loadPricesAndRender();
-      await refreshHistory().catch(() => {});
+      queuePostUnlockWarmup();
     })
     .catch((e) => {
       setSessionPassword(null);
@@ -60,8 +136,37 @@ async function unlockAndAutoStart() {
       const isLikelyWrongPassword = /exit\s*1/i.test(msg) && /exited before RPC became ready/i.test(msg);
       setText(hintEl, isLikelyWrongPassword ? "Password is not correct." : msg);
       $("unlockOverlay")?.classList.remove("hidden");
+      startNeural();
     })
-    .finally(() => setUiBusy(false));
+}
+
+let _warmupToken = 0;
+
+function requestIdle(cb, timeoutMs = 800) {
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => cb(), { timeout: timeoutMs });
+    return;
+  }
+  setTimeout(cb, 0);
+}
+
+function queuePostUnlockWarmup() {
+  const token = ++_warmupToken;
+
+  // All stages run as soon as the RPC is ready — no artificial stagger
+  (async () => {
+    if (token !== _warmupToken) return;
+    await showBaseAddress().catch(() => {});
+    if (token !== _warmupToken) return;
+    await refreshBalance().catch(() => {});
+    if (token !== _warmupToken) return;
+    // Small yield so balance renders before heavier work starts
+    await new Promise((r) => setTimeout(r, 50));
+    if (token !== _warmupToken) return;
+    await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
+    await loadPricesAndRender();
+    await refreshHistory().catch(() => {});
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +269,11 @@ function wireUi() {
   $("navSecurity")?.addEventListener("click", () => {
     if (!getSessionPassword()) return;
     switchView("security");
+  });
+  $("navSwap")?.addEventListener("click", () => {
+    if (!getSessionPassword()) return;
+    switchView("swap");
+    updateSwapBalanceHint();
   });
 
   // (Asset header dropdown removed — balance card now shows all assets)
@@ -287,8 +397,7 @@ function wireUi() {
     const password = $("addWalletPassword").value;
     const password2= $("addWalletPassword2").value;
     if (!name)                           return appendLog(logEl, "Enter a wallet name.");
-    if (!password)                       return appendLog(logEl, "Enter a wallet password.");
-    if (password !== password2)          return appendLog(logEl, "Passwords do not match.");
+    if (!validatePasswords(password, password2, logEl)) return;
     if (!selectedCreatePath)           { appendLog(logEl, "Select wallet location first."); return; }
 
     setUiBusy(true, "Creating wallet…");
@@ -351,8 +460,7 @@ function wireUi() {
     const password2     = $("restoreWalletPassword2").value;
     if (!name)             return appendLog(logEl, "Enter a wallet name.");
     if (!seedPhrase)       return appendLog(logEl, "Enter your seed phrase.");
-    if (!password)         return appendLog(logEl, "Enter a wallet password.");
-    if (password !== password2) return appendLog(logEl, "Passwords do not match.");
+    if (!validatePasswords(password, password2, logEl)) return;
     if (!selectedRestorePath)   return appendLog(logEl, "Select wallet location first.");
 
     setUiBusy(true, "Restoring wallet…");
@@ -697,6 +805,316 @@ function wireUi() {
     await refreshHistory(state.historyPage + 1);
   });
 
+  // --- Swap section ---
+  let _stopPoll = null;
+
+  function swapFromTicker() { return $("swapFromAsset")?.value || "ZANO"; }
+  function swapToTicker()   { return $("swapToAsset")?.value   || "fUSD"; }
+
+  function getSwapFromAssetId() {
+    return swapFromTicker() === "ZANO" ? ZANO_ASSET_ID : FUSD_ASSET_ID;
+  }
+
+  function getSwapFromDp() {
+    const assetId = getSwapFromAssetId();
+    return state.assetsById.get(assetId)?.decimalPoint ?? 12;
+  }
+
+  function getSwapMaxAtomicForFrom() {
+    const assetId = getSwapFromAssetId();
+    return getMaxSendableAtomic(assetId);
+  }
+
+  function setSwapExecuteEnabled(enabled) {
+    const btn = $("btnSwapExecute");
+    if (!btn) return;
+    btn.disabled = !enabled;
+  }
+
+  function syncSwapSelectors() {
+    const fromEl = $("swapFromAsset");
+    const toEl   = $("swapToAsset");
+    if (!fromEl || !toEl) return;
+    const from = fromEl.value;
+    toEl.value = from === "ZANO" ? "fUSD" : "ZANO";
+  }
+
+  function updateSwapBalanceHint() {
+    const ticker = swapFromTicker();
+    const assetId = ticker === "ZANO" ? ZANO_ASSET_ID : FUSD_ASSET_ID;
+    const el = $("swapFromBalance");
+    if (!el) return;
+    const dp = state.assetsById.get(assetId)?.decimalPoint ?? 12;
+    const unlocked = state.balancesById.get(assetId)?.unlockedAtomic ?? 0n;
+    el.textContent = `Available: ${atomicToZanoString(unlocked, dp)} ${ticker}`;
+  }
+
+  $("swapFromAsset")?.addEventListener("change", () => {
+    syncSwapSelectors();
+    updateSwapBalanceHint();
+    $("swapFromAmount").value = "";
+    $("swapToAmount").value = "";
+    $("swapRate").textContent = "";
+    $("swapBalanceInfo")?.style && ($("swapBalanceInfo").style.display = "none");
+    setSwapExecuteEnabled(false);
+  });
+
+  $("btnSwapFlip")?.addEventListener("click", () => {
+    const fromEl = $("swapFromAsset");
+    const toEl   = $("swapToAsset");
+    if (!fromEl || !toEl) return;
+    const prev = fromEl.value;
+    fromEl.value = prev === "ZANO" ? "fUSD" : "ZANO";
+    syncSwapSelectors();
+    updateSwapBalanceHint();
+    $("swapFromAmount").value = "";
+    $("swapToAmount").value = "";
+    $("swapRate").textContent = "";
+    if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "none";
+    setSwapExecuteEnabled(false);
+  });
+
+  function updateUsdEquivalent(amountAtomic) {
+    const prices = state.usdPrices;
+    const zanoUsd = prices?.ZANO?.usd ?? null;
+    if (!zanoUsd) return;
+    const ticker = swapFromTicker();
+    const dp = getSwapFromDp();
+    const amtNum = Number(atomicToZanoString(amountAtomic, dp)) || 0;
+    const usd = ticker === "fUSD" ? amtNum : amtNum * zanoUsd;
+    $("swapRate").textContent = `≈ $${usd.toFixed(2)} USD`;
+  }
+
+  function refreshSwapAmountDetails(amountAtomic) {
+    const assetId = getSwapFromAssetId();
+    const dp = getSwapFromDp();
+    const ticker = swapFromTicker();
+    const total = state.balancesById.get(assetId)?.totalAtomic ?? 0n;
+    const unlocked = state.balancesById.get(assetId)?.unlockedAtomic ?? 0n;
+    const maxAtomic = getSwapMaxAtomicForFrom() ?? 0n;
+
+    $("swapTotalBalance") && setText($("swapTotalBalance"), `${atomicToZanoString(total, dp)} ${ticker}`);
+    $("swapUnlockedBalance") && setText($("swapUnlockedBalance"), `${atomicToZanoString(unlocked, dp)} ${ticker}`);
+    $("swapMaxAfterFee") && setText($("swapMaxAfterFee"), `${atomicToZanoString(maxAtomic, dp)} ${ticker}`);
+
+    const feeZano = atomicToZanoString(FEE_ATOMIC, 12);
+    if (ticker === "ZANO") {
+      $("swapFeeReserveText") && setText($("swapFeeReserveText"), `Fee/burn reserve: ${feeZano} ZANO`);
+      const afterFee = amountAtomic > FEE_ATOMIC ? (amountAtomic - FEE_ATOMIC) : 0n;
+      $("swapAmountAfterFees") && setText($("swapAmountAfterFees"), `${atomicToZanoString(afterFee, dp)} ${ticker}`);
+    } else {
+      $("swapFeeReserveText") && setText($("swapFeeReserveText"), `Requires unlocked ZANO fee reserve: ${feeZano} ZANO`);
+      $("swapAmountAfterFees") && setText($("swapAmountAfterFees"), `${atomicToZanoString(amountAtomic, dp)} ${ticker}`);
+    }
+
+    if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "block";
+  }
+
+  function onSwapAmountChange() {
+    const swapAmtEl = $("swapFromAmount");
+    if (!swapAmtEl) return;
+    const dp = getSwapFromDp();
+    const maxAtomic = getSwapMaxAtomicForFrom();
+    let raw = swapAmtEl.value;
+
+    let amountAtomic = parseAmountToAtomic(raw, dp);
+
+    // Hard-cap to max if over
+    if (maxAtomic != null && amountAtomic > maxAtomic) {
+      swapAmtEl.value = atomicToZanoString(maxAtomic, dp);
+      raw = swapAmtEl.value;
+      amountAtomic = maxAtomic;
+    }
+
+    if (!raw || Number.isNaN(parseFloat(raw)) || amountAtomic <= 0n) {
+      $("swapToAmount").value = "";
+      if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "none";
+      setSwapExecuteEnabled(false);
+      $("swapRate").textContent = "";
+      return;
+    }
+
+    setSwapExecuteEnabled(true);
+    refreshSwapAmountDetails(amountAtomic);
+    updateUsdEquivalent(amountAtomic);
+
+    // Fetch estimated output from proxy (debounced).
+    const cappedAmt = parseFloat(swapAmtEl.value);
+    const from = swapFromTicker();
+    const to = swapToTicker();
+    if (_rateTimer) clearTimeout(_rateTimer);
+    _rateTimer = setTimeout(async () => {
+      try {
+        const data = await swapGetRate(from, to, cappedAmt);
+        const toAmt = data?.toAmount ?? data?.amountTo ?? data?.destination_amount;
+        $("swapToAmount").value = toAmt != null ? String(toAmt) : "";
+      } catch {
+        $("swapToAmount").value = "";
+      }
+    }, 200);
+  }
+
+  let _rateTimer = null;
+  $("swapFromAmount")?.addEventListener("input", onSwapAmountChange);
+
+  $("swapFromAmount")?.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const swapAmtEl = $("swapFromAmount");
+    if (!swapAmtEl) return;
+    const STEP = 0.1;
+    const current = parseFloat(swapAmtEl.value) || 0;
+    const delta = e.deltaY > 0 ? -STEP : STEP;
+    let next = Math.round(Math.max(0, current + delta) * 10) / 10;
+
+    const dp = getSwapFromDp();
+    const maxAtomic = getSwapMaxAtomicForFrom();
+    if (maxAtomic != null) {
+      const maxStr = atomicToZanoString(maxAtomic, dp);
+      const maxNum = Number(maxStr);
+      if (Number.isFinite(maxNum)) next = Math.min(next, maxNum);
+    }
+    swapAmtEl.value = next > 0 ? String(next) : "";
+    onSwapAmountChange();
+  }, { passive: false });
+
+  $("btnSwapMax")?.addEventListener("click", () => {
+    const dp = getSwapFromDp();
+    const maxAtomic = getSwapMaxAtomicForFrom();
+    if (maxAtomic == null || maxAtomic <= 0n) {
+      $("swapFromAmount").value = "";
+      onSwapAmountChange();
+      return;
+    }
+    $("swapFromAmount").value = atomicToZanoString(maxAtomic, dp);
+    onSwapAmountChange();
+  });
+
+  function setSwapStatus(text) {
+    const area = $("swapStatus");
+    const el = $("swapStatusText");
+    if (area) area.classList.remove("hidden");
+    if (el) el.textContent = text;
+  }
+
+  function resetSwapStatus() {
+    $("swapStatus")?.classList.add("hidden");
+    $("swapProgress")?.classList.add("hidden");
+    const el = $("swapStatusText");
+    if (el) el.textContent = "";
+  }
+
+  const STATUS_PROGRESS = { wait: 15, confirmation: 35, exchanging: 60, sending: 85, success: 100 };
+
+  function updateProgressBar(status) {
+    const bar = $("swapProgress");
+    const fill = $("swapProgressFill");
+    if (!bar || !fill) return;
+    bar.classList.remove("hidden");
+    const pct = STATUS_PROGRESS[status] ?? 0;
+    fill.style.width = `${pct}%`;
+    if (status === "success") fill.classList.add("done");
+    else fill.classList.remove("done");
+  }
+
+  $("btnSwapExecute")?.addEventListener("click", async () => {
+    if (_stopPoll) { _stopPoll(); _stopPoll = null; }
+    resetSwapStatus();
+    const logEl = $("swapLog");
+    if (logEl) logEl.textContent = "";
+
+    const amt = parseFloat($("swapFromAmount")?.value);
+    if (!amt || amt <= 0) { appendLog(logEl, "Enter an amount to swap."); return; }
+
+    const from = swapFromTicker();
+    const to   = swapToTicker();
+
+    let withdrawalAddress = "";
+    try {
+      withdrawalAddress = await showBaseAddress() || "";
+    } catch (addrErr) {
+      log.warn("showBaseAddress failed:", addrErr?.message);
+    }
+    if (!withdrawalAddress) {
+      appendLog(logEl, "Wallet not ready. Unlock and wait for the backend to finish syncing, then try again.");
+      return;
+    }
+
+    setUiBusy(true, "Creating exchange…");
+    setSwapStatus("Creating exchange…");
+    try {
+      const healthy = await swapHealthCheck();
+      if (!healthy) { appendLog(logEl, "Swap service is unreachable. Ensure the swap backend is running."); return; }
+
+      const ex = await createExchange(from, to, amt, withdrawalAddress);
+      const exchangeId    = ex.id;
+      const depositAddr   = ex.depositAddress || ex.deposit_address || "";
+      const depositAmount = ex.amount ?? ex.depositAmount ?? amt;
+
+      if (!depositAddr) {
+        appendLog(logEl, "Exchange created but no deposit address returned. Aborting.");
+        resetSwapStatus();
+        return;
+      }
+
+      const fromAssetId = from === "ZANO" ? ZANO_ASSET_ID : FUSD_ASSET_ID;
+      const fromInfo = KNOWN_ASSETS[fromAssetId] || { decimalPoint: 12 };
+      const dp = fromInfo.decimalPoint ?? 12;
+      const amountAtomic = parseAmountToAtomic(String(depositAmount), dp);
+
+      if (amountAtomic <= 0n) {
+        appendLog(logEl, "Invalid deposit amount from exchange. Aborting.");
+        resetSwapStatus();
+        return;
+      }
+
+      setSwapStatus(`Sending ${depositAmount} ${from} to exchange deposit…`);
+      updateProgressBar("wait");
+
+      let transferRes;
+      try {
+        transferRes = await walletRpc("transfer", {
+          destinations: [{ address: depositAddr, amount: amountAtomic.toString(), asset_id: fromAssetId }],
+          fee:          FEE_ATOMIC.toString(),
+          mixin:        MIXIN,
+          hide_receiver: true,
+          push_payer:   false,
+        });
+      } catch (txErr) {
+        appendLog(logEl, `Transfer failed: ${txErr.message || "unknown error"}. Your funds are safe.`);
+        resetSwapStatus();
+        return;
+      }
+
+      const txHash = transferRes?.result?.tx_details?.id || transferRes?.result?.tx_hash || "";
+      if (!txHash) {
+        appendLog(logEl, "Transfer to exchange deposit failed. Your funds are safe.");
+        if (transferRes?.error) appendLog(logEl, `RPC error: ${transferRes.error.message || JSON.stringify(transferRes.error)}`);
+        resetSwapStatus();
+        return;
+      }
+
+      setSwapStatus(`Deposit sent (tx: ${txHash.slice(0, 12)}…). Waiting for exchange…`);
+
+      _stopPoll = pollExchange(exchangeId, (data) => {
+        const st = data.status || "unknown";
+        updateProgressBar(st);
+        if (st === "success") {
+          setSwapStatus(`Swap complete! You received ${data.amountTo ?? "—"} ${to}.`);
+        } else if (st === "error" || st === "overdue" || st === "refund" || st === "refunded") {
+          setSwapStatus(`Swap ${st}. ${data._pollError || data.message || ""}`);
+        } else {
+          setSwapStatus(`Status: ${st}…`);
+        }
+      });
+    } catch (err) {
+      appendLog(logEl, err.message || "Exchange failed.");
+      resetSwapStatus();
+    } finally {
+      setUiBusy(false);
+    }
+  });
+
+
   // --- Sounds section ---
   wireSoundsSettings();
 
@@ -729,11 +1147,14 @@ function wireUi() {
 
 async function init() {
   log.info("initializing");
+  // Kick off price fetch immediately — result is cached so warmup hits it instantly
+  fetchPricesOnce().catch(() => {});
   const cfg = await window.zano.configGet().catch(() => ({}));
   let lastWalletPath = String(cfg?.lastWalletPath || "").trim();
   const defaultWalletPath = await getDefaultWalletPath();
 
   $("unlockOverlay")?.classList.add("hidden");
+  stopNeural();
 
   if (!lastWalletPath && defaultWalletPath) {
     const defaultExists = await window.zano.walletFileExists(defaultWalletPath).catch(() => false);
@@ -756,6 +1177,8 @@ async function init() {
       if (walletInput) walletInput.value = lastWalletPath;
       switchView("wallet");
       showUnlockOverlay("Enter your wallet password to unlock this wallet.");
+      // Pre-resolve config + exe path while user is typing their password (~200ms saved)
+      prewarmStartupCache().catch(() => {});
     }
   }
 
@@ -770,14 +1193,39 @@ async function init() {
   prewarmSoundsIfNeeded().catch(() => {});
 
   const sw = await window.zano.simplewalletState();
-  setStatus(sw?.status || "stopped");
+  if (sw?.status === "running") {
+    const nodeLabel = await getCurrentNodeLabel();
+    setConnectionStatus({ phase: "connected", nodeLabel });
+  } else {
+    startDaemonPreflight();
+  }
 
   window.zano.onSimplewalletState((st) => {
-    setStatus(st?.status || "stopped");
+    const raw = st?.status || "stopped";
+    stopDaemonPreflight();
+    if (raw !== "running") _warmupToken++;
+    getCurrentNodeLabel().then((nodeLabel) => {
+      if (raw === "running") {
+        setConnectionStatus({ phase: "connected", nodeLabel, detail: "wallet_ready" });
+        return;
+      }
+
+      if (raw === "starting" || raw === "stopping") {
+        const ms = parseSimplewalletMilestone(st?.stdoutTail, st?.stderrTail);
+        setConnectionStatus({
+          phase: "connecting",
+          nodeLabel,
+          subtext: ms?.subtext || (raw === "stopping" ? "Stopping wallet…" : "Starting wallet…"),
+          detail: ms?.detail || "wallet_starting",
+        });
+        return;
+      }
+
+      setConnectionStatus({ phase: "offline", nodeLabel, detail: "daemon_bad" });
+    }).catch(() => setStatus(raw));
     if (st?.status === "running" && st?.rpcUrl && getSessionPassword()) {
       playStartupSoundOnce();
     }
-    // Only log errors/exit codes for unexpected exits (not intentional stops)
     if (st?.status === "stopped" && st?.lastError)  appendLog($("logArea"), `simplewallet error: ${st.lastError}`);
     if (st?.status === "stopped" && typeof st?.lastExitCode === "number" && st.lastExitCode !== null && st.lastExitCode !== 0) {
       appendLog($("logArea"), `simplewallet exit code: ${st.lastExitCode}`);
@@ -789,9 +1237,26 @@ async function init() {
   refreshLocateButtonVis().catch(() => {});
 
   $("btnUnlock")?.addEventListener("click", unlockAndAutoStart);
-  $("btnUnlockClose")?.addEventListener("click", () => $("unlockOverlay")?.classList.add("hidden"));
+  $("btnUnlockClose")?.addEventListener("click", () => { $("unlockOverlay")?.classList.add("hidden"); stopNeural(); });
+  $("btnUnlockChooseWallet")?.addEventListener("click", async () => {
+    try {
+      const res = await window.zano.openFileDialog({
+        properties: ["openFile"],
+        filters: [{ name: "Zano wallet", extensions: ["zan"] }],
+      });
+      const filePath = res?.filePaths?.[0];
+      if (!filePath) return;
+      state.currentWalletFile = filePath;
+      $("inputWalletFile") && ($("inputWalletFile").value = filePath);
+      await window.zano.simplewalletStop().catch(() => {});
+      clearWalletHistoryState();
+      await window.zano.configSet({ lastWalletPath: filePath }).catch(() => {});
+      showUnlockOverlay("Enter your wallet password to unlock this wallet.");
+    } catch {}
+  });
   $("btnUnlockCreateNew")?.addEventListener("click", () => {
     $("unlockOverlay")?.classList.add("hidden");
+    stopNeural();
     switchView("settings");
   });
   $("unlockPassword")?.addEventListener("keydown", (e) => {

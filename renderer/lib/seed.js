@@ -29,8 +29,12 @@ export function renderSeedWordsInto(el, words) {
   el.innerHTML = "";
   words.forEach((w, i) => {
     const chip = document.createElement("div");
-    chip.className = "seedWord";
-    chip.textContent = `${i + 1}. ${w}`;
+    chip.className = "seedChip";
+    const idx = document.createElement("span");
+    idx.className = "seedIdx";
+    idx.textContent = `${i + 1}`;
+    chip.appendChild(idx);
+    chip.append(` ${w}`);
     el.appendChild(chip);
   });
 }
@@ -103,12 +107,7 @@ export async function handleConfirmViewSeed() {
     } else {
       setText($("seedStatus"), words.length === 26 ? "Seed phrase (26 words)" : `Seed phrase (${words.length} words)`);
     }
-    words.forEach((w, i) => {
-      const chip = document.createElement("div");
-      chip.className = "seedChip";
-      chip.innerHTML = `<span class="seedIdx">${i + 1}</span> ${w}`;
-      wordsEl.appendChild(chip);
-    });
+    renderSeedWordsInto(wordsEl, words);
     seedView.showModal();
     playSeedSound().catch(() => {});
 

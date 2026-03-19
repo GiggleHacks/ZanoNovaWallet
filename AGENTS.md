@@ -101,7 +101,7 @@ Status broadcasts from main → renderer via `onSimplewalletState()` callback.
 ## Config
 
 Stored at `{appData}/config.json`. Defaults:
-- `daemonAddress: "37.27.100.59:10500"` (public node)
+- `daemonAddress: "64.111.93.25:10500"` (default node)
 - `walletRpcBindIp: "127.0.0.1"`, `walletRpcBindPort: 12233`
 - `simplewalletExePath: ""` (resolved automatically unless overridden)
 

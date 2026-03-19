@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("zano", {
   configGet: () => ipcRenderer.invoke("config:get"),
   configSet: (partial) => ipcRenderer.invoke("config:set", partial),
 
+  daemonGetinfo: (opts) => ipcRenderer.invoke("daemon:getinfo", opts),
+
   simplewalletResolveExe: (overridePath) => ipcRenderer.invoke("simplewallet:resolveExe", overridePath),
   simplewalletStart: (opts) => ipcRenderer.invoke("simplewallet:start", opts),
   simplewalletStop: () => ipcRenderer.invoke("simplewallet:stop"),
@@ -25,5 +27,9 @@ contextBridge.exposeInMainWorld("zano", {
 
   openFileDialog: (opts) => ipcRenderer.invoke("dialog:openFile", opts),
   saveWalletDialog: () => ipcRenderer.invoke("dialog:saveWallet"),
+
+  swapRate: (opts) => ipcRenderer.invoke("swap:rate", opts),
+  swapExchange: (opts) => ipcRenderer.invoke("swap:exchange", opts),
+  swapStatus: (id) => ipcRenderer.invoke("swap:status", id),
 });
 

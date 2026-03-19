@@ -18,7 +18,12 @@ export const KNOWN_ASSETS = {
 
 // Network / RPC defaults — single source of truth for the renderer.
 // These mirror main/config.js DEFAULTS; change both if the values ever change.
-export const DEFAULT_DAEMON_ADDRESS = "37.27.100.59:10500";
+export const DEFAULT_DAEMON_ADDRESS = "64.111.93.25:10500";
+
+export const KNOWN_NODES = [
+  { label: "ZanoNova Node (default)", address: "64.111.93.25:10500" },
+  { label: "Zano.org Official Node", address: "37.27.100.59:10500" },
+];
 export const DEFAULT_RPC_BIND_IP    = "127.0.0.1";
 export const DEFAULT_RPC_BIND_PORT  = 12233;
 

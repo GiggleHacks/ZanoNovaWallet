@@ -270,18 +270,21 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
     stdio: ["ignore", "pipe", "pipe"],
     cwd: exeDir,
     env: spawnEnv,
+    detached: true, // survive app close — reused on next launch via port detection
   });
+  simplewalletProc.unref(); // don't block Electron from exiting
 
   let stdout = "";
   let stderr = "";
 
   simplewalletProc.stdout.on("data", (buf) => {
     stdout += buf.toString("utf8");
-    setSimplewalletState({ status: "running", stdoutTail: stdout.slice(-8000) });
+    // Don't flip to "running" based on output alone — RPC readiness is the signal.
+    setSimplewalletState({ stdoutTail: stdout.slice(-8000) });
   });
   simplewalletProc.stderr.on("data", (buf) => {
     stderr += buf.toString("utf8");
-    setSimplewalletState({ status: "running", stderrTail: stderr.slice(-8000) });
+    setSimplewalletState({ stderrTail: stderr.slice(-8000) });
   });
   simplewalletProc.on("exit", (code) => {
     setSimplewalletState({ status: "stopped", lastExitCode: code ?? null });
@@ -304,7 +307,7 @@ function stopSimplewallet() {
   } catch {}
 }
 
-async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 12_000 }) {
+async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 120_000 }) {
   const deadline = Date.now() + timeoutMs;
   const url = `http://${rpcBindIp}:${rpcBindPort}/json_rpc`;
 
@@ -320,15 +323,17 @@ async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 12_00
       const s = net.connect({ host: rpcBindIp, port: rpcBindPort });
       s.once("connect", () => { s.end(); resolve(true); });
       s.once("error", () => resolve(false));
-      s.setTimeout(400, () => resolve(false));
+      s.setTimeout(150, () => resolve(false));
     });
 
     if (portOpen) {
       try {
-        await jsonRpcCall({ url, method: "getaddress", params: {}, timeoutMs: 2_000 });
+        await jsonRpcCall({ url, method: "getaddress", params: {}, timeoutMs: 1_000 });
         return { ok: true, url };
       } catch {}
     }
+
+    await new Promise((r) => setTimeout(r, 150));
   }
 
   const stderrTail = simplewalletState?.stderrTail || "";

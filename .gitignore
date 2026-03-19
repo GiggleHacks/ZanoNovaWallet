@@ -6,3 +6,4 @@ build/vendor/
 resources/*.dll
 resources/simplewallet.exe
 .claude
+.env

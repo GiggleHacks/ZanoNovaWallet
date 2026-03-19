@@ -14,10 +14,30 @@ import {
   DEFAULT_DAEMON_ADDRESS,
   DEFAULT_RPC_BIND_IP,
   DEFAULT_RPC_BIND_PORT,
+  KNOWN_NODES,
 } from "./constants.js";
 import { playReceiveSound } from "./audio.js";
 
 const log = createLogger("wallet");
+
+// ---------------------------------------------------------------------------
+// Startup cache — pre-resolved before password entry to shave ~200ms off unlock
+// ---------------------------------------------------------------------------
+
+let _startupCache = null;
+
+/** Call during app init (while unlock screen is showing) to pre-resolve config
+ *  and exe path so startWalletRpc() can skip those async calls. */
+export async function prewarmStartupCache() {
+  try {
+    const cfg      = await window.zano.configGet();
+    const resolved = await resolveExePath();
+    _startupCache  = { cfg, resolved };
+    log.debug("startup cache ready");
+  } catch {
+    _startupCache = null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Path helpers
@@ -65,6 +85,24 @@ export function showUnlockOverlay(message) {
   if (hintEl) setText(hintEl, message || "Enter your wallet password to unlock this wallet.");
   $("unlockOverlay")?.classList.remove("hidden");
   $("unlockPassword")?.focus?.();
+
+  // Play cyberpunk unlock sound (fire-and-forget)
+  try {
+    const audio = new Audio("./assets/cyberpunk.mp3");
+    audio.volume = 0.7;
+    audio.play().catch(() => {});
+  } catch { /* audio is optional */ }
+
+  // Kick off neural canvas if available (fire-and-forget)
+  import("./neural-canvas.js")
+    .then(({ initNeuralCanvas, startNeural }) => {
+      const canvas = $("neuralCanvas");
+      if (canvas) {
+        initNeuralCanvas(canvas);
+        startNeural();
+      }
+    })
+    .catch(() => { /* neural canvas is optional eye-candy */ });
 }
 
 export function clearWalletHistoryState() {
@@ -144,7 +182,11 @@ export async function locateSimplewallet() {
 
 export async function startWalletRpc(passwordOverride) {
   clearWalletHistoryState();
-  const cfg      = await window.zano.configGet();
+  // Consume startup cache (pre-resolved during unlock screen display), falling
+  // back to fresh async calls if the cache missed or prewarm didn't finish yet.
+  const cache    = _startupCache;
+  _startupCache  = null;
+  const cfg      = cache?.cfg      ?? await window.zano.configGet();
   const password = passwordOverride ?? getSessionPassword() ?? $("inputPassword")?.value ?? "";
 
   let walletFile = $("inputWalletFile")?.value?.trim() || "";
@@ -168,7 +210,7 @@ export async function startWalletRpc(passwordOverride) {
   appendLog(logEl, `Starting simplewallet RPC on ${cfg.walletRpcBindIp}:${cfg.walletRpcBindPort}…`);
   log.info("starting RPC for", walletFile);
 
-  const resolved = await resolveExePath();
+  const resolved = cache?.resolved ?? await resolveExePath();
   appendLog(logEl, `simplewallet: ${resolved.resolved || "(not found)"}`);
   if (!resolved.resolved && Array.isArray(resolved.candidates)) {
     appendLog(logEl, `Tried:\n- ${resolved.candidates.join("\n- ")}`);
@@ -204,10 +246,19 @@ function populateBalanceMaps(balances) {
   state.assetsById.clear();
   for (const b of balances) {
     const ai = b.asset_info || {};
-    const assetId = ai.asset_id || "";
+    let assetId = ai.asset_id || "";
     if (!assetId) continue;
-    const dp = typeof ai.decimal_point === "number" ? ai.decimal_point : 12;
+
+    // Ticker-based fallback: if the RPC returns fUSD under a different
+    // asset_id than the hardcoded constant, map it to the canonical id so
+    // the rest of the UI finds it under FUSD_ASSET_ID.
     const ticker = ai.ticker || KNOWN_ASSETS[assetId]?.ticker || "ASSET";
+    if (ticker === "fUSD" && assetId !== FUSD_ASSET_ID) {
+      log.info("fUSD asset_id remapped:", assetId, "->", FUSD_ASSET_ID);
+      assetId = FUSD_ASSET_ID;
+    }
+
+    const dp = typeof ai.decimal_point === "number" ? ai.decimal_point : 12;
     const fullName = ai.full_name || ticker;
     state.assetsById.set(assetId, { ticker, fullName, decimalPoint: dp });
     try {
@@ -726,6 +777,13 @@ export async function refreshBalance() {
   populateBalanceMaps(balances);
   renderHeaderBalance();
   if ($("balances")) renderBalances(balances);
+
+  // If fUSD isn't in the balance response, re-attempt whitelisting so it
+  // appears on the next refresh. This handles the case where the initial
+  // whitelist call during startup failed because the RPC wasn't ready yet.
+  if (!state.balancesById.has(FUSD_ASSET_ID)) {
+    ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
+  }
 }
 
 export async function refreshHistory(page = state.historyPage) {
@@ -842,15 +900,118 @@ export async function renderReceiveQr(address) {
 // Settings dialog helpers
 // ---------------------------------------------------------------------------
 
+function getNodeDropdownValue(wrapperEl) {
+  if (!wrapperEl) return null;
+  return wrapperEl.getAttribute("data-value") || null;
+}
+
+function buildNodeDropdown(wrapperEl, currentAddr) {
+  if (!wrapperEl) return;
+  if (wrapperEl._dropdownClose) {
+    wrapperEl._dropdownClose();
+    wrapperEl._dropdownClose = null;
+  }
+
+  const options = [
+    ...KNOWN_NODES.map((n) => ({
+      value: n.address,
+      label: `${n.label} (${n.address})`,
+      logoUrl: null,
+    })),
+    { value: "custom", label: "Custom…", logoUrl: null },
+  ];
+
+  const knownMatch = KNOWN_NODES.find((n) => n.address === currentAddr);
+  const currentValue = knownMatch ? currentAddr : "custom";
+  const currentOption = options.find((o) => o.value === currentValue) || options[0];
+
+  wrapperEl.className = "assetDropdownWrapper";
+  wrapperEl.replaceChildren();
+  wrapperEl.setAttribute("data-value", currentValue);
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "assetDropdownTrigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  renderTriggerContent(trigger, currentOption);
+
+  const panel = document.createElement("div");
+  panel.className = "assetDropdownPanel";
+  panel.setAttribute("role", "listbox");
+  panel.hidden = true;
+
+  function setSelected(value) {
+    wrapperEl.setAttribute("data-value", value);
+    panel.querySelectorAll(".assetOption").forEach((row) => {
+      row.classList.toggle("selected", row.getAttribute("data-value") === value);
+    });
+    const chosen = options.find((o) => o.value === value);
+    if (chosen) renderTriggerContent(trigger, chosen);
+  }
+
+  for (const opt of options) {
+    panel.appendChild(createOptionRow(opt, opt.value === currentValue, (value) => {
+      setSelected(value);
+      trigger.setAttribute("aria-expanded", "false");
+      panel.hidden = true;
+      wrapperEl.dispatchEvent(new Event("change", { bubbles: true }));
+    }));
+  }
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !panel.hidden;
+    panel.hidden = open;
+    trigger.setAttribute("aria-expanded", String(!open));
+  });
+
+  function close(e) {
+    if (e && wrapperEl.contains(e.target)) return;
+    panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", close);
+  }
+  document.addEventListener("click", close);
+  wrapperEl._dropdownClose = () => document.removeEventListener("click", close);
+
+  wrapperEl.appendChild(trigger);
+  wrapperEl.appendChild(panel);
+}
+
+function syncDaemonFieldWithNodeSelect() {
+  const selWrap = $("cfgNodeSelect");
+  const daemon = $("cfgDaemon");
+  if (!selWrap || !daemon) return;
+
+  const v = getNodeDropdownValue(selWrap);
+  if (v === "custom") {
+    daemon.disabled = false;
+    return;
+  }
+  if (typeof v === "string" && v.trim()) {
+    daemon.value = v;
+    daemon.disabled = true;
+  }
+}
+
 export async function loadSettingsIntoDialog() {
   const cfg      = await window.zano.configGet();
   const daemon   = $("cfgDaemon");
   const bindIp   = $("cfgBindIp");
   const bindPort = $("cfgBindPort");
-  // Placeholders show the effective default so users know what a blank field means.
+  const sel      = $("cfgNodeSelect");
+
+  if (sel) {
+    const currentAddr = cfg.daemonAddress || DEFAULT_DAEMON_ADDRESS;
+    buildNodeDropdown(sel, currentAddr);
+    sel.onchange = syncDaemonFieldWithNodeSelect;
+  }
+
   if (daemon) {
     daemon.placeholder = DEFAULT_DAEMON_ADDRESS;
     daemon.value = cfg.daemonAddress || "";
+    syncDaemonFieldWithNodeSelect();
   }
   if (bindIp) {
     bindIp.placeholder = DEFAULT_RPC_BIND_IP;
@@ -864,14 +1025,25 @@ export async function loadSettingsIntoDialog() {
   if (exe) {
     exe.value = (cfg.simplewalletExePath || "").trim();
   }
+  const exolixKey = $("cfgExolixKey");
+  if (exolixKey) {
+    exolixKey.value = (cfg.exolixApiKey || "").trim();
+  }
 }
 
 export async function saveSettingsFromDialog() {
+  const sel = $("cfgNodeSelect");
+  const selected = getNodeDropdownValue(sel);
+  const daemonAddress = (selected && selected !== "custom")
+    ? selected
+    : ($("cfgDaemon").value.trim() || DEFAULT_DAEMON_ADDRESS);
+
   const partial = {
-    daemonAddress:       $("cfgDaemon").value.trim()   || DEFAULT_DAEMON_ADDRESS,
+    daemonAddress,
     walletRpcBindIp:     $("cfgBindIp").value.trim()   || DEFAULT_RPC_BIND_IP,
     walletRpcBindPort:   Number($("cfgBindPort").value) || DEFAULT_RPC_BIND_PORT,
     simplewalletExePath: $("cfgExe").value.trim(),
+    exolixApiKey:        ($("cfgExolixKey")?.value || "").trim(),
   };
   await window.zano.configSet(partial);
   log.info("settings saved");

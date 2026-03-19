@@ -29,19 +29,23 @@ function getOrCreateAudio(type) {
   return state[cfg.audioKey];
 }
 
-async function playSound(type) {
-  if (!isSoundEnabled(type)) return;
-  const audio = getOrCreateAudio(type);
-  if (!audio) return;
+async function _playAudioEl(audio, label) {
   try {
     audio.pause();
     audio.currentTime = 0;
     audio.volume = getVolume();
-    log.debug("playing", type);
+    log.debug(label);
     await audio.play().catch(() => {});
   } catch {
     // ignore audio errors
   }
+}
+
+async function playSound(type) {
+  if (!isSoundEnabled(type)) return;
+  const audio = getOrCreateAudio(type);
+  if (!audio) return;
+  await _playAudioEl(audio, `playing ${type}`);
 }
 
 /**
@@ -50,15 +54,7 @@ async function playSound(type) {
 export async function previewSound(type) {
   const audio = getOrCreateAudio(type);
   if (!audio) return;
-  try {
-    audio.pause();
-    audio.currentTime = 0;
-    audio.volume = getVolume();
-    log.debug("previewing", type);
-    await audio.play().catch(() => {});
-  } catch {
-    // ignore audio errors
-  }
+  await _playAudioEl(audio, `previewing ${type}`);
 }
 
 export async function playStartupSoundOnce() {
