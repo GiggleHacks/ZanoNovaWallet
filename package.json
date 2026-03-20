@@ -1,6 +1,6 @@
 {
   "name": "zano-nova",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "Zano Nova — Zano Without the Blockchain Wait.",
   "main": "main/main.js",
   "scripts": {
