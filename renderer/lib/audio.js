@@ -8,6 +8,7 @@ export const SOUNDS = {
   send:    { audioKey: "sendAudio",    src: "./assets/zano_nova_send3.mp3",    label: "Send" },
   receive: { audioKey: "receiveAudio", src: "./assets/zano__nova_recieved.mp3", label: "Receive" },
   seed:    { audioKey: "seedAudio",    src: "./assets/seed.mp3",              label: "Seed phrase" },
+  unlock:  { audioKey: "unlockAudio", src: "./assets/cyberpunk.mp3",         label: "Unlock" },
 };
 
 function getVolume() {
@@ -73,6 +74,10 @@ export async function playReceiveSound() {
 
 export async function playSeedSound() {
   await playSound("seed");
+}
+
+export async function playUnlockSound() {
+  await playSound("unlock");
 }
 
 export async function prewarmSoundsIfNeeded() {

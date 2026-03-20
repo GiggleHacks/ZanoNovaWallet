@@ -344,7 +344,7 @@ ipcMain.handle("dialog:saveWallet", async () => {
 // Swap (Exolix)
 // ---------------------------------------------------------------------------
 
-const EXOLIX_API_BASE = "https://exolix.com/api/v2";
+const EXOLIX_PROXY = "http://64.111.93.25:10501";
 
 const SWAP_TICKER_MAP = {
   ZANO: { coin: "ZANO", network: "ZANO" },
@@ -352,12 +352,7 @@ const SWAP_TICKER_MAP = {
   FUSD: { coin: "FUSD", network: "ZANO" },
 };
 
-function exolixHeaders() {
-  const cfg = getConfig();
-  const h = { Accept: "application/json", "Content-Type": "application/json" };
-  if (cfg.exolixApiKey) h.Authorization = cfg.exolixApiKey;
-  return h;
-}
+const PROXY_HEADERS = { Accept: "application/json", "Content-Type": "application/json" };
 
 ipcMain.handle("swap:rate", async (_evt, input) => {
   const { from, to, amount, rateType } = input || {};
@@ -371,7 +366,7 @@ ipcMain.handle("swap:rate", async (_evt, input) => {
     amount: String(amount || "1"),
     rateType: rateType || "float",
   });
-  const resp = await fetch(`${EXOLIX_API_BASE}/rate?${params}`, { headers: exolixHeaders() });
+  const resp = await fetch(`${EXOLIX_PROXY}/rate?${params}`, { headers: PROXY_HEADERS });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`Exolix rate error (${resp.status}): ${text}`);
@@ -394,9 +389,9 @@ ipcMain.handle("swap:exchange", async (_evt, input) => {
   if (!f || !t) throw new Error(`Unsupported pair: ${from} -> ${to}`);
   if (!withdrawalAddress) throw new Error("withdrawalAddress is required");
 
-  const resp = await fetch(`${EXOLIX_API_BASE}/transactions`, {
+  const resp = await fetch(`${EXOLIX_PROXY}/transactions`, {
     method: "POST",
-    headers: exolixHeaders(),
+    headers: PROXY_HEADERS,
     body: JSON.stringify({
       coinFrom: f.coin, networkFrom: f.network,
       coinTo: t.coin, networkTo: t.network,
@@ -428,7 +423,7 @@ ipcMain.handle("swap:exchange", async (_evt, input) => {
 
 ipcMain.handle("swap:status", async (_evt, exchangeId) => {
   if (!exchangeId) throw new Error("Missing exchange ID");
-  const resp = await fetch(`${EXOLIX_API_BASE}/transactions/${exchangeId}`, { headers: exolixHeaders() });
+  const resp = await fetch(`${EXOLIX_PROXY}/transactions/${exchangeId}`, { headers: PROXY_HEADERS });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`Exolix status error (${resp.status}): ${text}`);
@@ -439,8 +434,14 @@ ipcMain.handle("swap:status", async (_evt, exchangeId) => {
     amount: data.amount,
     amountTo: data.amountTo,
     status: data.status,
+    confirmations: data.confirmations ?? 0,
+    confirmationsRequired: data.confirmationsRequired ?? 10,
     hashIn: data.hashIn || null,
     hashOut: data.hashOut || null,
+    coinFrom: data.coinFrom || null,
+    coinTo: data.coinTo || null,
+    rate: data.rate || null,
+    rateType: data.rateType || null,
     depositAddress: data.depositAddress,
     withdrawalAddress: data.withdrawalAddress,
   };

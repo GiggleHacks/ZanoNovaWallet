@@ -274,56 +274,132 @@
               <h2>Swap</h2>
               <div class="hint">Exchange between ZANO and fUSD instantly.</div>
 
-              <div class="swapFields">
-                <div class="swapFieldGroup">
-                  <div class="kicker">You send</div>
-                  <div class="swapInputRow">
-                    <input id="swapFromAmount" type="number" min="0" step="any" placeholder="0.00" class="swapAmountInput" data-busy-disable />
+              <!-- FROM panel -->
+              <div class="swapPanel">
+                <div class="swapPanelHeader">
+                  <span class="swapPanelLabel">You send</span>
+                  <span class="swapPanelBal" id="swapFromBalance"></span>
+                </div>
+                <div class="swapPanelBody">
+                  <div class="swapCoin swapCoin--zano" id="swapCoinFrom"><img src="./assets/zano-icon-white.svg" alt="ZANO" /></div>
+                  <div class="swapInputWrap">
+                    <input id="swapFromAmount" type="text" inputmode="decimal" placeholder="0.00" class="swapBigInput" data-busy-disable />
+                    <span id="swapFromSub" class="swapSubAmount"></span>
+                  </div>
+                  <div class="swapTokenPicker">
                     <select id="swapFromAsset" class="swapAssetSelect" data-busy-disable>
                       <option value="ZANO">ZANO</option>
                       <option value="fUSD">fUSD</option>
                     </select>
-                    <button id="btnSwapMax" class="btn" type="button" data-busy-disable data-tooltip="Use the maximum transferable amount.">Max</button>
-                  </div>
-                  <div class="hint" id="swapFromBalance"></div>
-                  <div class="sendBalanceInfo" id="swapBalanceInfo" style="margin-top:12px; display:none">
-                    <div>Total balance: <span id="swapTotalBalance" class="mono">—</span></div>
-                    <div>Unlocked: <span id="swapUnlockedBalance" class="mono">—</span></div>
-                    <div>Max after fee (burn 0.01 ZANO): <span id="swapMaxAfterFee" class="mono">—</span></div>
-                    <div class="hint" style="margin-top:6px" id="swapFeeReserveText"></div>
-                    <div>Amount after fees: <span id="swapAmountAfterFees" class="mono">—</span></div>
+                    <button id="swapDenomToggle" class="swapDenomToggle" type="button" data-busy-disable data-tooltip="Toggle USD / token input">$</button>
+                    <button id="btnSwapMax" class="swapMaxBtn" type="button" data-busy-disable data-tooltip="Use the maximum transferable amount.">MAX</button>
                   </div>
                 </div>
-
-                <div class="swapFlipRow">
-                  <button id="btnSwapFlip" class="swapFlipBtn" type="button" title="Swap direction" data-busy-disable>
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 3 3 7 7 11"/><path d="M3 7h18"/><polyline points="17 13 21 17 17 21"/><path d="M21 17H3"/></svg>
-                  </button>
+                <div id="swapBalanceInfo" class="swapFeeDetails" style="display:none">
+                  <div class="swapFeeRow"><span>Total balance</span><span id="swapTotalBalance" class="mono">—</span></div>
+                  <div class="swapFeeRow"><span>Unlocked</span><span id="swapUnlockedBalance" class="mono">—</span></div>
+                  <div class="swapFeeRow"><span>Max after fee</span><span id="swapMaxAfterFee" class="mono">—</span></div>
+                  <div class="swapFeeRow hint" id="swapFeeReserveText"></div>
+                  <div class="swapFeeRow"><span>Amount after fees</span><span id="swapAmountAfterFees" class="mono">—</span></div>
                 </div>
+              </div>
 
-                <div class="swapFieldGroup">
-                  <div class="kicker">You receive (estimated)</div>
-                  <div class="swapInputRow">
-                    <input id="swapToAmount" type="text" readonly placeholder="—" class="swapAmountInput readonlyInput" />
+              <!-- Limits row — always visible, populated on load -->
+              <div id="swapLimitsRow" class="swapLimitsRow">
+                <span><span class="swapLimitLabel">Min:</span> <span id="swapMinLimit" class="swapLimitValue">…</span></span>
+                <span><span class="swapLimitLabel">Max:</span> <span id="swapMaxLimit" class="swapLimitValue">…</span></span>
+              </div>
+
+              <!-- Flip button -->
+              <div class="swapFlipRow">
+                <button id="btnSwapFlip" class="swapFlipBtn" type="button" title="Swap direction" data-busy-disable>
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 3 3 7 7 11"/><path d="M3 7h18"/><polyline points="17 13 21 17 17 21"/><path d="M21 17H3"/></svg>
+                </button>
+              </div>
+
+              <!-- TO panel -->
+              <div class="swapPanel swapPanelTo">
+                <div class="swapPanelHeader">
+                  <span class="swapPanelLabel">You receive (estimated)</span>
+                  <span class="swapPanelBal" id="swapRate"></span>
+                </div>
+                <div class="swapPanelBody">
+                  <div class="swapCoin swapCoin--fusd" id="swapCoinTo"><img src="./assets/fusd.png" alt="fUSD" /></div>
+                  <div class="swapInputWrap">
+                    <input id="swapToAmount" type="text" readonly placeholder="0.00" class="swapBigInput swapBigInputReadonly" />
+                    <span id="swapToSub" class="swapSubAmount"></span>
+                  </div>
+                  <div class="swapTokenPicker">
                     <select id="swapToAsset" class="swapAssetSelect" disabled>
                       <option value="fUSD">fUSD</option>
                       <option value="ZANO">ZANO</option>
                     </select>
                   </div>
-                  <div class="hint" id="swapRate"></div>
                 </div>
               </div>
 
-              <div class="row" style="margin-top:16px">
-                <button id="btnSwapExecute" class="btn primary" type="button" data-busy-disable disabled>Start Exchange</button>
-              </div>
+              <!-- Rate info -->
+              <div id="swapRateInfo" class="swapRateInfo" style="display:none"></div>
+
+              <button id="btnSwapExecute" class="swapExecuteBtn" type="button" data-busy-disable disabled>Start Exchange</button>
 
               <div id="swapStatus" class="swapStatusArea hidden">
-                <div class="kicker">Exchange status</div>
-                <div id="swapStatusText" class="hint"></div>
-                <div id="swapProgress" class="swapProgressBar hidden">
-                  <div id="swapProgressFill" class="swapProgressFill"></div>
+
+                <!-- Step header: badge + title + Exolix link -->
+                <div class="swapStepHeader">
+                  <span id="swapStepBadge" class="swapStepBadge"></span>
+                  <span id="swapStepTitle" class="swapStepTitle"></span>
+                  <a id="swapExolixLink" class="swapExolixLink" href="#" target="_blank">View on Exolix ↗</a>
                 </div>
+
+                <!-- Rate + TX ID row -->
+                <div class="swapTxMeta">
+                  <span id="swapTxRate" class="swapTxRate"></span>
+                  <span class="swapTxIdWrap">
+                    ID: <code id="swapTxId" class="swapTxId"></code>
+                    <button id="btnCopyTxId" class="swapCopyBtn" title="Copy transaction ID">⧉</button>
+                  </span>
+                </div>
+
+                <!-- You send / You receive info card -->
+                <div class="swapTxInfoCard">
+                  <div class="swapTxInfoSide">
+                    <div class="swapTxInfoLabel">You send</div>
+                    <div class="swapTxInfoAmount">
+                      <span id="swapTxAmountFrom" class="swapTxBigNum"></span>
+                      <span id="swapTxCoinFrom" class="swapTxTicker"></span>
+                    </div>
+                    <div class="swapTxInfoAddr">
+                      <span id="swapTxDepositAddr" class="swapTxAddr"></span>
+                    </div>
+                  </div>
+                  <div class="swapTxInfoArrow">→</div>
+                  <div class="swapTxInfoSide">
+                    <div class="swapTxInfoLabel">You receive</div>
+                    <div class="swapTxInfoAmount">
+                      <span id="swapTxAmountTo" class="swapTxBigNum"></span>
+                      <span id="swapTxCoinTo" class="swapTxTicker"></span>
+                    </div>
+                    <div class="swapTxInfoAddr">
+                      <span id="swapTxWithdrawAddr" class="swapTxAddr"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 3-step progress tracker -->
+                <div class="swapStepTrack">
+                  <div id="swapStep1" class="swapStepItem">
+                    <div class="swapStepLabel">Confirmation <span id="swapConfirmCount" class="swapConfirmCount"></span></div>
+                    <div class="swapStepBar"><div id="swapStep1Fill" class="swapStepFill"></div></div>
+                  </div>
+                  <div id="swapStep2" class="swapStepItem">
+                    <div class="swapStepLabel">Exchanging</div>
+                  </div>
+                  <div id="swapStep3" class="swapStepItem">
+                    <div class="swapStepLabel">Sending</div>
+                  </div>
+                </div>
+
               </div>
 
               <pre class="log" id="swapLog"></pre>
@@ -387,10 +463,6 @@
               <input id="cfgExe" type="text" placeholder="/path/to/simplewallet" />
               <button id="btnBrowseExe" class="btn" type="button">Browse…</button>
             </div>
-          </label>
-          <label class="field">
-            <span>Exolix API key (for swaps)</span>
-            <input id="cfgExolixKey" type="password" placeholder="Bearer eyJ…" autocomplete="off" />
           </label>
           <div class="row">
             <button class="btn" value="cancel">Close</button>

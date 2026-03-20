@@ -16,7 +16,7 @@ import {
   DEFAULT_RPC_BIND_PORT,
   KNOWN_NODES,
 } from "./constants.js";
-import { playReceiveSound } from "./audio.js";
+import { playReceiveSound, playUnlockSound } from "./audio.js";
 
 const log = createLogger("wallet");
 
@@ -86,12 +86,8 @@ export function showUnlockOverlay(message) {
   $("unlockOverlay")?.classList.remove("hidden");
   $("unlockPassword")?.focus?.();
 
-  // Play cyberpunk unlock sound (fire-and-forget)
-  try {
-    const audio = new Audio("./assets/cyberpunk.mp3");
-    audio.volume = 0.7;
-    audio.play().catch(() => {});
-  } catch { /* audio is optional */ }
+  // Play unlock sound (fire-and-forget, respects settings)
+  playUnlockSound();
 
   // Kick off neural canvas if available (fire-and-forget)
   import("./neural-canvas.js")
@@ -1025,10 +1021,6 @@ export async function loadSettingsIntoDialog() {
   if (exe) {
     exe.value = (cfg.simplewalletExePath || "").trim();
   }
-  const exolixKey = $("cfgExolixKey");
-  if (exolixKey) {
-    exolixKey.value = (cfg.exolixApiKey || "").trim();
-  }
 }
 
 export async function saveSettingsFromDialog() {
@@ -1043,7 +1035,6 @@ export async function saveSettingsFromDialog() {
     walletRpcBindIp:     $("cfgBindIp").value.trim()   || DEFAULT_RPC_BIND_IP,
     walletRpcBindPort:   Number($("cfgBindPort").value) || DEFAULT_RPC_BIND_PORT,
     simplewalletExePath: $("cfgExe").value.trim(),
-    exolixApiKey:        ($("cfgExolixKey")?.value || "").trim(),
   };
   await window.zano.configSet(partial);
   log.info("settings saved");

@@ -12,7 +12,6 @@ const DEFAULTS = Object.freeze({
   soundToggles: { startup: true, send: true, receive: true, seed: true },
   tooltipsEnabled: true,
   simplewalletExePath: "",
-  exolixApiKey: "",
 });
 
 const APP_SUPPORT_DIR_NAME = "Zano Nova";

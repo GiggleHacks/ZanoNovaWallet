@@ -19,7 +19,7 @@ import {
 } from "./lib/wallet.js";
 import { send } from "./lib/send.js";
 import { showSeedBackupForWallet, viewSeedPhraseFlow, handleConfirmViewSeed } from "./lib/seed.js";
-import { checkHealth as swapHealthCheck, getRate as swapGetRate, createExchange, pollExchange } from "./lib/swap.js";
+import { checkHealth as swapHealthCheck, getRate as swapGetRate, createExchange, pollExchange, TERMINAL_STATUSES } from "./lib/swap.js";
 import { initNeuralCanvas, startNeural, stopNeural } from "./lib/neural-canvas.js";
 
 const log = createLogger("init");
@@ -274,6 +274,17 @@ function wireUi() {
     if (!getSessionPassword()) return;
     switchView("swap");
     updateSwapBalanceHint();
+    updateSwapDenomToggleUi();
+    preloadSwapLimits();
+    // Restore persisted swap if no active poll running
+    if (!_stopPoll && !_swapMeta) {
+      const saved = loadSwapFromStorage();
+      if (saved?.id) {
+        _swapMeta = saved;
+        renderSwapStatus({ status: "wait", confirmations: 0, confirmationsRequired: 10 });
+        _stopPoll = pollExchange(saved.id, renderSwapStatus);
+      }
+    }
   });
 
   // (Asset header dropdown removed — balance card now shows all assets)
@@ -807,6 +818,20 @@ function wireUi() {
 
   // --- Swap section ---
   let _stopPoll = null;
+  let _swapMeta = null;   // metadata for the active exchange (id, from, to, amounts, addresses, rate)
+  const SWAP_LS_KEY = "zano_wallet_active_swap";
+  function saveSwapToStorage(meta) {
+    try { localStorage.setItem(SWAP_LS_KEY, JSON.stringify(meta)); } catch {}
+  }
+  function loadSwapFromStorage() {
+    try { const r = localStorage.getItem(SWAP_LS_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
+  }
+  function clearSwapStorage() {
+    try { localStorage.removeItem(SWAP_LS_KEY); } catch {}
+  }
+  let _rateTimer = null;
+  let _swapDenomMode = "ASSET";   // "ASSET" | "USD"
+  let _swapLastRate = null;        // cached { rate, minAmount, maxAmount, toAmount }
 
   function swapFromTicker() { return $("swapFromAsset")?.value || "ZANO"; }
   function swapToTicker()   { return $("swapToAsset")?.value   || "fUSD"; }
@@ -825,6 +850,10 @@ function wireUi() {
     return getMaxSendableAtomic(assetId);
   }
 
+  function getZanoPriceUsd() {
+    return state.usdPrices?.ZANO?.usd ?? null;
+  }
+
   function setSwapExecuteEnabled(enabled) {
     const btn = $("btnSwapExecute");
     if (!btn) return;
@@ -835,8 +864,22 @@ function wireUi() {
     const fromEl = $("swapFromAsset");
     const toEl   = $("swapToAsset");
     if (!fromEl || !toEl) return;
-    const from = fromEl.value;
-    toEl.value = from === "ZANO" ? "fUSD" : "ZANO";
+    toEl.value = fromEl.value === "ZANO" ? "fUSD" : "ZANO";
+    // Update coin icons
+    const coinFrom = $("swapCoinFrom");
+    const coinTo   = $("swapCoinTo");
+    const isZano = fromEl.value === "ZANO";
+    [coinFrom, coinTo].forEach((el, i) => {
+      if (!el) return;
+      const showZano = i === 0 ? isZano : !isZano;
+      const img = el.querySelector("img");
+      if (img) {
+        img.src = showZano ? "./assets/zano-icon-white.svg" : "./assets/fusd.png";
+        img.alt = showZano ? "ZANO" : "fUSD";
+      }
+      el.classList.toggle("swapCoin--zano", showZano);
+      el.classList.toggle("swapCoin--fusd", !showZano);
+    });
   }
 
   function updateSwapBalanceHint() {
@@ -849,40 +892,137 @@ function wireUi() {
     el.textContent = `Available: ${atomicToZanoString(unlocked, dp)} ${ticker}`;
   }
 
-  $("swapFromAsset")?.addEventListener("change", () => {
-    syncSwapSelectors();
-    updateSwapBalanceHint();
-    $("swapFromAmount").value = "";
-    $("swapToAmount").value = "";
-    $("swapRate").textContent = "";
-    $("swapBalanceInfo")?.style && ($("swapBalanceInfo").style.display = "none");
-    setSwapExecuteEnabled(false);
-  });
+  function updateSwapDenomToggleUi() {
+    const pill = $("swapDenomToggle");
+    if (!pill) return;
+    const price = getZanoPriceUsd();
+    pill.disabled = !price;
+    if (_swapDenomMode === "USD") {
+      // Currently in USD mode — pill shows "USD" (click to go back to token)
+      pill.textContent = "USD";
+      pill.classList.add("active");
+    } else {
+      // Currently in ASSET mode — pill shows "$" (click to switch to USD)
+      pill.textContent = "$";
+      pill.classList.remove("active");
+    }
+  }
 
-  $("btnSwapFlip")?.addEventListener("click", () => {
-    const fromEl = $("swapFromAsset");
-    const toEl   = $("swapToAsset");
-    if (!fromEl || !toEl) return;
-    const prev = fromEl.value;
-    fromEl.value = prev === "ZANO" ? "fUSD" : "ZANO";
-    syncSwapSelectors();
-    updateSwapBalanceHint();
-    $("swapFromAmount").value = "";
-    $("swapToAmount").value = "";
-    $("swapRate").textContent = "";
-    if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "none";
-    setSwapExecuteEnabled(false);
-  });
+  // Probe rate API when swap view opens to pre-load min/max limits
+  async function preloadSwapLimits() {
+    const from = swapFromTicker();
+    const to   = swapToTicker();
+    try {
+      const data = await swapGetRate(from, to, 1);
+      if (!data) return;
+      _swapLastRate = data;
+      const limitsRow = $("swapLimitsRow");
+      const minEl = $("swapMinLimit");
+      const maxEl = $("swapMaxLimit");
+      if (!limitsRow || !minEl || !maxEl) return;
+      const min = data.minAmount;
+      const max = data.maxAmount;
+      if (min != null || max != null) {
+        limitsRow.style.display = "flex";
+        minEl.textContent = min != null ? `${min} ${from}` : "—";
+        maxEl.textContent = max != null ? `${max} ${from}` : "—";
+        minEl.classList.remove("error");
+        maxEl.classList.remove("error");
+      }
+    } catch { /* silent — limits will load after user types */ }
+  }
 
-  function updateUsdEquivalent(amountAtomic) {
-    const prices = state.usdPrices;
-    const zanoUsd = prices?.ZANO?.usd ?? null;
-    if (!zanoUsd) return;
-    const ticker = swapFromTicker();
+  // Convert input value to effective token amount (float) for API calls
+  function getSwapTokenAmount() {
+    const raw = parseFloat($("swapFromAmount")?.value);
+    if (!raw || Number.isNaN(raw) || raw <= 0) return 0;
+    if (_swapDenomMode === "USD") {
+      const ticker = swapFromTicker();
+      if (ticker === "fUSD") return raw; // 1:1
+      const price = getZanoPriceUsd();
+      return price ? raw / price : 0;
+    }
+    return raw;
+  }
+
+  // Dual display: show the "other" denomination below the input
+  function updateSwapDualDisplay(tokenAmountAtomic) {
+    const fromSubEl = $("swapFromSub");
     const dp = getSwapFromDp();
-    const amtNum = Number(atomicToZanoString(amountAtomic, dp)) || 0;
-    const usd = ticker === "fUSD" ? amtNum : amtNum * zanoUsd;
-    $("swapRate").textContent = `≈ $${usd.toFixed(2)} USD`;
+    const ticker = swapFromTicker();
+    const tokenStr = atomicToZanoString(tokenAmountAtomic, dp);
+    const tokenNum = Number(tokenStr) || 0;
+    const price = getZanoPriceUsd();
+
+    if (!fromSubEl) return;
+
+    if (_swapDenomMode === "USD") {
+      // Input is USD → show token equivalent (truncate to 6 decimals for readability)
+      const shortToken = tokenNum > 0 ? parseFloat(tokenNum.toFixed(6)) : 0;
+      fromSubEl.textContent = shortToken > 0 ? `≈ ${shortToken} ${ticker}` : "";
+    } else {
+      // Input is token → show USD equivalent
+      if (ticker === "fUSD") {
+        fromSubEl.textContent = tokenNum > 0 ? `≈ $${tokenNum.toFixed(2)} USD` : "";
+      } else if (price && tokenNum > 0) {
+        fromSubEl.textContent = `≈ $${(tokenNum * price).toFixed(2)} USD`;
+      } else {
+        fromSubEl.textContent = "";
+      }
+    }
+  }
+
+  function updateSwapToDisplay(toAmount) {
+    const toSubEl = $("swapToSub");
+    if (!toSubEl) return;
+    const toTicker = swapToTicker();
+    const amt = Number(toAmount) || 0;
+    if (amt <= 0) { toSubEl.textContent = ""; return; }
+    const price = getZanoPriceUsd();
+    if (toTicker === "fUSD") {
+      toSubEl.textContent = `≈ $${amt.toFixed(2)} USD`;
+    } else if (price) {
+      toSubEl.textContent = `≈ $${(amt * price).toFixed(2)} USD`;
+    } else {
+      toSubEl.textContent = "";
+    }
+  }
+
+  function updateSwapRateInfo(data) {
+    const el = $("swapRateInfo");
+    if (!el) return;
+    const rate = data?.rate;
+    if (rate && Number(rate) > 0) {
+      el.textContent = `1 ${swapFromTicker()} ≈ ${rate} ${swapToTicker()}`;
+      el.style.display = "block";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  function updateSwapLimits(data, currentTokenAmount) {
+    const limitsRow = $("swapLimitsRow");
+    const minEl = $("swapMinLimit");
+    const maxEl = $("swapMaxLimit");
+    if (!limitsRow || !minEl || !maxEl) return;
+
+    const min = data?.minAmount;
+    const max = data?.maxAmount;
+    const ticker = swapFromTicker();
+
+    // Always show the limits row
+    minEl.textContent = min != null ? `${min} ${ticker}` : "—";
+    maxEl.textContent = max != null ? `${max} ${ticker}` : "—";
+
+    // Validate and highlight errors
+    const belowMin = min != null && currentTokenAmount > 0 && currentTokenAmount < Number(min);
+    const aboveMax = max != null && currentTokenAmount > Number(max);
+    minEl.classList.toggle("error", belowMin);
+    maxEl.classList.toggle("error", aboveMax);
+
+    if (belowMin || aboveMax) {
+      setSwapExecuteEnabled(false);
+    }
   }
 
   function refreshSwapAmountDetails(amountAtomic) {
@@ -910,73 +1050,195 @@ function wireUi() {
     if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "block";
   }
 
+  function resetSwapUi() {
+    _swapDenomMode = "ASSET";
+    _swapLastRate = null;
+    $("swapFromAmount").value = "";
+    $("swapToAmount").value = "";
+    $("swapRate").textContent = "";
+    const fromSub = $("swapFromSub"); if (fromSub) fromSub.textContent = "";
+    const toSub = $("swapToSub"); if (toSub) toSub.textContent = "";
+    const rateInfo = $("swapRateInfo"); if (rateInfo) rateInfo.style.display = "none";
+    // Clear error highlights on limits but keep the row visible — re-probe for new direction
+    const minEl = $("swapMinLimit"); if (minEl) { minEl.classList.remove("error"); minEl.textContent = "…"; }
+    const maxEl = $("swapMaxLimit"); if (maxEl) { maxEl.classList.remove("error"); maxEl.textContent = "…"; }
+    const limitsRow = $("swapLimitsRow"); if (limitsRow) limitsRow.style.display = "flex";
+    if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "none";
+    setSwapExecuteEnabled(false);
+    updateSwapDenomToggleUi();
+    preloadSwapLimits();
+  }
+
   function onSwapAmountChange() {
     const swapAmtEl = $("swapFromAmount");
     if (!swapAmtEl) return;
     const dp = getSwapFromDp();
     const maxAtomic = getSwapMaxAtomicForFrom();
-    let raw = swapAmtEl.value;
 
-    let amountAtomic = parseAmountToAtomic(raw, dp);
-
-    // Hard-cap to max if over
-    if (maxAtomic != null && amountAtomic > maxAtomic) {
-      swapAmtEl.value = atomicToZanoString(maxAtomic, dp);
-      raw = swapAmtEl.value;
-      amountAtomic = maxAtomic;
-    }
-
-    if (!raw || Number.isNaN(parseFloat(raw)) || amountAtomic <= 0n) {
+    // Resolve effective token amount based on denomination mode
+    const tokenAmount = getSwapTokenAmount();
+    if (!tokenAmount || tokenAmount <= 0) {
       $("swapToAmount").value = "";
       if ($("swapBalanceInfo")) $("swapBalanceInfo").style.display = "none";
       setSwapExecuteEnabled(false);
       $("swapRate").textContent = "";
+      const fromSub = $("swapFromSub"); if (fromSub) fromSub.textContent = "";
+      const toSub = $("swapToSub"); if (toSub) toSub.textContent = "";
       return;
+    }
+
+    let amountAtomic = parseAmountToAtomic(String(tokenAmount), dp);
+
+    // Hard-cap to max if over
+    if (maxAtomic != null && amountAtomic > maxAtomic) {
+      amountAtomic = maxAtomic;
+      const maxTokenStr = atomicToZanoString(maxAtomic, dp);
+      if (_swapDenomMode === "USD") {
+        const price = getZanoPriceUsd();
+        const ticker = swapFromTicker();
+        if (ticker === "fUSD") {
+          swapAmtEl.value = maxTokenStr;
+        } else if (price) {
+          swapAmtEl.value = String((Number(maxTokenStr) * price).toFixed(2));
+        }
+      } else {
+        swapAmtEl.value = maxTokenStr;
+      }
     }
 
     setSwapExecuteEnabled(true);
     refreshSwapAmountDetails(amountAtomic);
-    updateUsdEquivalent(amountAtomic);
+    updateSwapDualDisplay(amountAtomic);
 
-    // Fetch estimated output from proxy (debounced).
-    const cappedAmt = parseFloat(swapAmtEl.value);
+    // USD equivalent in the TO panel header
+    const price = getZanoPriceUsd();
+    const tokenNum = Number(atomicToZanoString(amountAtomic, dp)) || 0;
+    const ticker = swapFromTicker();
+    if (ticker === "fUSD") {
+      $("swapRate").textContent = tokenNum > 0 ? `≈ $${tokenNum.toFixed(2)} USD` : "";
+    } else if (price && tokenNum > 0) {
+      $("swapRate").textContent = `≈ $${(tokenNum * price).toFixed(2)} USD`;
+    } else {
+      $("swapRate").textContent = "";
+    }
+
+    // Re-validate against last known limits
+    if (_swapLastRate) {
+      updateSwapLimits(_swapLastRate, tokenNum);
+    }
+
+    // Debounced rate fetch — always pass token amount to API
     const from = swapFromTicker();
     const to = swapToTicker();
     if (_rateTimer) clearTimeout(_rateTimer);
     _rateTimer = setTimeout(async () => {
       try {
-        const data = await swapGetRate(from, to, cappedAmt);
+        const data = await swapGetRate(from, to, tokenNum);
+        _swapLastRate = data;
         const toAmt = data?.toAmount ?? data?.amountTo ?? data?.destination_amount;
         $("swapToAmount").value = toAmt != null ? String(toAmt) : "";
+        updateSwapToDisplay(toAmt);
+        updateSwapRateInfo(data);
+        updateSwapLimits(data, tokenNum);
       } catch {
         $("swapToAmount").value = "";
+        const toSub = $("swapToSub"); if (toSub) toSub.textContent = "";
       }
     }, 200);
   }
 
-  let _rateTimer = null;
-  $("swapFromAmount")?.addEventListener("input", onSwapAmountChange);
+  // Input sanitizer for type="text" — allow digits and one decimal point
+  $("swapFromAmount")?.addEventListener("input", (e) => {
+    let v = e.target.value.replace(/[^0-9.]/g, "");
+    const parts = v.split(".");
+    if (parts.length > 2) v = parts[0] + "." + parts.slice(1).join("");
+    if (v !== e.target.value) e.target.value = v;
+    onSwapAmountChange();
+  });
 
+  // Denomination toggle
+  $("swapDenomToggle")?.addEventListener("click", () => {
+    const price = getZanoPriceUsd();
+    if (!price) return;
+    const swapAmtEl = $("swapFromAmount");
+    const currentVal = parseFloat(swapAmtEl?.value) || 0;
+    const ticker = swapFromTicker();
+
+    if (_swapDenomMode === "ASSET") {
+      // ASSET → USD: convert token amount to USD
+      _swapDenomMode = "USD";
+      if (currentVal > 0) {
+        const usd = ticker === "fUSD" ? currentVal : currentVal * price;
+        swapAmtEl.value = usd.toFixed(2);
+      }
+    } else {
+      // USD → ASSET: convert USD amount to token
+      _swapDenomMode = "ASSET";
+      if (currentVal > 0) {
+        const token = ticker === "fUSD" ? currentVal : currentVal / price;
+        swapAmtEl.value = String(parseFloat(token.toFixed(6)));
+      }
+    }
+    updateSwapDenomToggleUi();
+    onSwapAmountChange();
+  });
+
+  // Asset change handler
+  $("swapFromAsset")?.addEventListener("change", () => {
+    syncSwapSelectors();
+    updateSwapBalanceHint();
+    resetSwapUi();
+  });
+
+  // Flip handler
+  $("btnSwapFlip")?.addEventListener("click", () => {
+    const fromEl = $("swapFromAsset");
+    if (!fromEl) return;
+    fromEl.value = fromEl.value === "ZANO" ? "fUSD" : "ZANO";
+    syncSwapSelectors();
+    updateSwapBalanceHint();
+    resetSwapUi();
+    // Trigger coin flip + panel flash animation
+    [$("swapCoinFrom"), $("swapCoinTo")].forEach(el => {
+      if (!el) return;
+      el.classList.remove("coinFlip");
+      void el.offsetWidth; // force reflow to restart animation
+      el.classList.add("coinFlip");
+      setTimeout(() => el.classList.remove("coinFlip"), 600);
+    });
+    document.querySelectorAll(".swapPanel").forEach(el => {
+      el.classList.remove("panelFlash");
+      void el.offsetWidth;
+      el.classList.add("panelFlash");
+      setTimeout(() => el.classList.remove("panelFlash"), 500);
+    });
+  });
+
+  // Wheel scroll
   $("swapFromAmount")?.addEventListener("wheel", (e) => {
     e.preventDefault();
     const swapAmtEl = $("swapFromAmount");
     if (!swapAmtEl) return;
-    const STEP = 0.1;
+    const STEP = _swapDenomMode === "USD" ? 1 : 0.1;
+    const precision = _swapDenomMode === "USD" ? 100 : 10;
     const current = parseFloat(swapAmtEl.value) || 0;
     const delta = e.deltaY > 0 ? -STEP : STEP;
-    let next = Math.round(Math.max(0, current + delta) * 10) / 10;
+    let next = Math.round(Math.max(0, current + delta) * precision) / precision;
 
-    const dp = getSwapFromDp();
-    const maxAtomic = getSwapMaxAtomicForFrom();
-    if (maxAtomic != null) {
-      const maxStr = atomicToZanoString(maxAtomic, dp);
-      const maxNum = Number(maxStr);
-      if (Number.isFinite(maxNum)) next = Math.min(next, maxNum);
+    // Cap to max in token terms
+    if (_swapDenomMode !== "USD") {
+      const dp = getSwapFromDp();
+      const maxAtomic = getSwapMaxAtomicForFrom();
+      if (maxAtomic != null) {
+        const maxNum = Number(atomicToZanoString(maxAtomic, dp));
+        if (Number.isFinite(maxNum)) next = Math.min(next, maxNum);
+      }
     }
     swapAmtEl.value = next > 0 ? String(next) : "";
     onSwapAmountChange();
   }, { passive: false });
 
+  // Max button
   $("btnSwapMax")?.addEventListener("click", () => {
     const dp = getSwapFromDp();
     const maxAtomic = getSwapMaxAtomicForFrom();
@@ -985,36 +1247,108 @@ function wireUi() {
       onSwapAmountChange();
       return;
     }
-    $("swapFromAmount").value = atomicToZanoString(maxAtomic, dp);
+    const maxTokenStr = atomicToZanoString(maxAtomic, dp);
+    if (_swapDenomMode === "USD") {
+      const price = getZanoPriceUsd();
+      const ticker = swapFromTicker();
+      if (ticker === "fUSD") {
+        $("swapFromAmount").value = maxTokenStr;
+      } else if (price) {
+        $("swapFromAmount").value = (Number(maxTokenStr) * price).toFixed(2);
+      } else {
+        $("swapFromAmount").value = maxTokenStr;
+      }
+    } else {
+      $("swapFromAmount").value = maxTokenStr;
+    }
     onSwapAmountChange();
   });
 
-  function setSwapStatus(text) {
+  function setText(id, val) {
+    const el = $(id);
+    if (el) el.textContent = val ?? "";
+  }
+
+  function renderSwapStatus(data) {
     const area = $("swapStatus");
-    const el = $("swapStatusText");
-    if (area) area.classList.remove("hidden");
-    if (el) el.textContent = text;
+    if (!area) return;
+    area.classList.remove("hidden");
+
+    const st = data.status || "wait";
+    if (TERMINAL_STATUSES.has(st)) clearSwapStorage();
+    area.classList.toggle("swapActive", !TERMINAL_STATUSES.has(st));
+    const meta = _swapMeta || {};
+
+    // Step badge + title
+    const STEP_MAP = {
+      wait:         { n: 1, of: 4, label: "Waiting for deposit" },
+      confirmation: { n: 2, of: 4, label: "Confirming" },
+      exchanging:   { n: 3, of: 4, label: "Exchanging" },
+      sending:      { n: 4, of: 4, label: "Sending" },
+      success:      { n: 4, of: 4, label: "Complete ✓" },
+      overdue:      { n: 1, of: 4, label: "Overdue" },
+      error:        { n: 1, of: 4, label: "Error" },
+      refund:       { n: 1, of: 4, label: "Refunding" },
+      refunded:     { n: 1, of: 4, label: "Refunded" },
+    };
+    const step = STEP_MAP[st] || { n: 1, of: 4, label: st };
+    setText("swapStepBadge", `${step.n} OF ${step.of}`);
+    setText("swapStepTitle", step.label);
+
+    // Exolix link — opens in system browser via setWindowOpenHandler in main.js
+    const link = $("swapExolixLink");
+    if (link && meta.id) {
+      link.href = `https://exolix.com/transaction/${meta.id}`;
+      link.style.display = "";
+    }
+
+    // Rate + TX ID row
+    const rateVal = data.rate ?? meta.rate;
+    if (rateVal) setText("swapTxRate", `1 ${meta.from} ≈ ${rateVal} ${meta.to}`);
+    setText("swapTxId", meta.id || "");
+
+    // You send / You receive
+    setText("swapTxAmountFrom", meta.amount ?? "");
+    setText("swapTxCoinFrom", meta.from ?? "");
+    setText("swapTxAmountTo", data.amountTo ?? meta.amountTo ?? "");
+    setText("swapTxCoinTo", meta.to ?? "");
+
+    // Addresses (truncated)
+    const trunc = (a) => a ? `${a.slice(0, 8)}…${a.slice(-6)}` : "";
+    setText("swapTxDepositAddr", trunc(meta.depositAddress));
+    setText("swapTxWithdrawAddr", trunc(meta.withdrawalAddress));
+
+    // Confirmation count + fill bar
+    const conf    = data.confirmations ?? 0;
+    const confReq = data.confirmationsRequired ?? 10;
+    setText("swapConfirmCount", `${conf}/${confReq}`);
+    const fill = $("swapStep1Fill");
+    if (fill) fill.style.width = `${Math.min(100, (conf / confReq) * 100)}%`;
+
+    // Highlight active step
+    const ACTIVE_STEP = { wait: 1, confirmation: 1, exchanging: 2, sending: 3, success: 3 };
+    const activeN = ACTIVE_STEP[st] ?? 1;
+    [1, 2, 3].forEach(n => {
+      const el = $(`swapStep${n}`);
+      if (!el) return;
+      el.classList.toggle("swapStepActive", n === activeN);
+      el.classList.toggle("swapStepDone", n < activeN || st === "success");
+    });
   }
 
   function resetSwapStatus() {
     $("swapStatus")?.classList.add("hidden");
-    $("swapProgress")?.classList.add("hidden");
-    const el = $("swapStatusText");
-    if (el) el.textContent = "";
+    $("swapStatus")?.classList.remove("swapActive");
+    const link = $("swapExolixLink");
+    if (link) { link.href = "#"; link.style.display = ""; }
+    _swapMeta = null;
+    clearSwapStorage();
   }
 
-  const STATUS_PROGRESS = { wait: 15, confirmation: 35, exchanging: 60, sending: 85, success: 100 };
-
-  function updateProgressBar(status) {
-    const bar = $("swapProgress");
-    const fill = $("swapProgressFill");
-    if (!bar || !fill) return;
-    bar.classList.remove("hidden");
-    const pct = STATUS_PROGRESS[status] ?? 0;
-    fill.style.width = `${pct}%`;
-    if (status === "success") fill.classList.add("done");
-    else fill.classList.remove("done");
-  }
+  $("btnCopyTxId")?.addEventListener("click", () => {
+    const id = $("swapTxId")?.textContent;
+    if (id) navigator.clipboard.writeText(id).catch(() => {});
+  });
 
   $("btnSwapExecute")?.addEventListener("click", async () => {
     if (_stopPoll) { _stopPoll(); _stopPoll = null; }
@@ -1022,8 +1356,9 @@ function wireUi() {
     const logEl = $("swapLog");
     if (logEl) logEl.textContent = "";
 
-    const amt = parseFloat($("swapFromAmount")?.value);
-    if (!amt || amt <= 0) { appendLog(logEl, "Enter an amount to swap."); return; }
+    // Always resolve to token amount for the exchange
+    const tokenAmt = getSwapTokenAmount();
+    if (!tokenAmt || tokenAmt <= 0) { appendLog(logEl, "Enter an amount to swap."); return; }
 
     const from = swapFromTicker();
     const to   = swapToTicker();
@@ -1040,21 +1375,35 @@ function wireUi() {
     }
 
     setUiBusy(true, "Creating exchange…");
-    setSwapStatus("Creating exchange…");
     try {
       const healthy = await swapHealthCheck();
       if (!healthy) { appendLog(logEl, "Swap service is unreachable. Ensure the swap backend is running."); return; }
 
-      const ex = await createExchange(from, to, amt, withdrawalAddress);
+      const ex = await createExchange(from, to, tokenAmt, withdrawalAddress);
       const exchangeId    = ex.id;
       const depositAddr   = ex.depositAddress || ex.deposit_address || "";
-      const depositAmount = ex.amount ?? ex.depositAmount ?? amt;
+      const depositAmount = ex.amount ?? ex.depositAmount ?? tokenAmt;
 
       if (!depositAddr) {
         appendLog(logEl, "Exchange created but no deposit address returned. Aborting.");
         resetSwapStatus();
         return;
       }
+
+      // Store exchange metadata so renderSwapStatus can populate the card
+      _swapMeta = {
+        id: exchangeId,
+        from,
+        to,
+        amount: depositAmount,
+        amountTo: ex.amountTo,
+        rate: ex.rate,
+        depositAddress: depositAddr,
+        withdrawalAddress,
+        txHash: "",
+      };
+      saveSwapToStorage(_swapMeta);
+      renderSwapStatus({ status: "wait", confirmations: 0, confirmationsRequired: 10 });
 
       const fromAssetId = from === "ZANO" ? ZANO_ASSET_ID : FUSD_ASSET_ID;
       const fromInfo = KNOWN_ASSETS[fromAssetId] || { decimalPoint: 12 };
@@ -1066,9 +1415,6 @@ function wireUi() {
         resetSwapStatus();
         return;
       }
-
-      setSwapStatus(`Sending ${depositAmount} ${from} to exchange deposit…`);
-      updateProgressBar("wait");
 
       let transferRes;
       try {
@@ -1093,19 +1439,9 @@ function wireUi() {
         return;
       }
 
-      setSwapStatus(`Deposit sent (tx: ${txHash.slice(0, 12)}…). Waiting for exchange…`);
+      if (_swapMeta) { _swapMeta.txHash = txHash; saveSwapToStorage(_swapMeta); }
 
-      _stopPoll = pollExchange(exchangeId, (data) => {
-        const st = data.status || "unknown";
-        updateProgressBar(st);
-        if (st === "success") {
-          setSwapStatus(`Swap complete! You received ${data.amountTo ?? "—"} ${to}.`);
-        } else if (st === "error" || st === "overdue" || st === "refund" || st === "refunded") {
-          setSwapStatus(`Swap ${st}. ${data._pollError || data.message || ""}`);
-        } else {
-          setSwapStatus(`Status: ${st}…`);
-        }
-      });
+      _stopPoll = pollExchange(exchangeId, renderSwapStatus);
     } catch (err) {
       appendLog(logEl, err.message || "Exchange failed.");
       resetSwapStatus();

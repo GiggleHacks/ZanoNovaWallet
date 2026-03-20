@@ -33,7 +33,7 @@ export async function getExchangeStatus(exchangeId) {
   return data;
 }
 
-const TERMINAL_STATUSES = new Set(["success", "overdue", "error", "refund", "refunded"]);
+export const TERMINAL_STATUSES = new Set(["success", "overdue", "error", "refund", "refunded"]);
 
 export function pollExchange(exchangeId, onUpdate) {
   let stopped = false;
