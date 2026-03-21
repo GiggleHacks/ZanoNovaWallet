@@ -214,22 +214,31 @@ ipcMain.handle("wallet:restore", async (_evt, input) => {
   fs.mkdirSync(walletsDir, { recursive: true });
 
   const { opts } = sw.spawnSimplewalletEnv(simplewalletExePath);
-  const args = [`--restore-wallet=${walletFile}`, `--daemon-address=${daemonAddress}`];
+  const args = [
+    `--restore-wallet=${walletFile}`,
+    `--password=${password}`,
+    `--daemon-address=${daemonAddress}`,
+  ];
   const proc = spawn(simplewalletExePath, args, opts);
 
-  // Prompts vary by version; we feed the common sequence:
-  // - new wallet password (+ confirm)
-  // - seed phrase
-  // - optional secured-seed passphrase (blank is fine)
-  // THIS IS NOT A DUPE - DO NOT REMOVE THE DOUBLE PASSWORD LINE
-  proc.stdin.write(`${password}\n`);
-  proc.stdin.write(`${password}\n`);
+  // With --password on CLI, simplewallet prompts only for:
+  // 1. seed phrase
+  // 2. seed protection passphrase (blank if none)
   proc.stdin.write(`${seedPhrase.trim()}\n`);
   proc.stdin.write(`${seedPassphrase}\n`);
   proc.stdin.end();
 
   const out = await collectOutput(proc);
-  if (out.code !== 0) throw new Error(`Wallet restore failed (exit ${out.code}). ${out.stderr || out.stdout}`);
+  const combined = (out.stdout + "\n" + out.stderr).toLowerCase();
+
+  if (out.code !== 0) {
+    // Check for successful restore despite non-zero exit (some versions do this)
+    if (combined.includes("restored") || combined.includes("wallet has been restored")) {
+      return { ok: true, output: out.stdout + (out.stderr ? "\n" + out.stderr : "") };
+    }
+    // Include raw output so user can see what simplewallet actually said
+    throw new Error(`Wallet restore failed (exit ${out.code}).\n${out.stderr || out.stdout}`);
+  }
   return { ok: true, output: out.stdout };
 });
 
