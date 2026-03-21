@@ -64,7 +64,14 @@ ipcMain.handle("config:set", (_evt, partial) => setConfig(partial || {}));
 // Simplewallet lifecycle
 // ---------------------------------------------------------------------------
 
-ipcMain.handle("simplewallet:resolveExe", (_evt, overridePath) => {
+ipcMain.handle("simplewallet:resolveExe", async (_evt, overridePath) => {
+  const cfg = getConfig();
+  const rpcBindPort = cfg.walletRpcBindPort;
+  // Kill any existing process on the port before copying binary files
+  // This prevents EBUSY errors when simplewallet.exe is locked by a stale process
+  sw.killProcessOnPort(rpcBindPort);
+  // Wait a moment for the file handles to be released
+  await new Promise(r => setTimeout(r, 300));
   const resolved = sw.resolveSimplewalletExePath(overridePath);
   return { resolved, candidates: sw.simplewalletExeCandidates(overridePath) };
 });
