@@ -2,7 +2,7 @@ import { createLogger } from "./logger.js";
 import { $, appendLog } from "./dom.js";
 import { state } from "./state.js";
 import { parseAmountToAtomic, atomicToDisplayString } from "./currency.js";
-import { FEE_ATOMIC, ZANO_ASSET_ID, KNOWN_ASSETS, MIXIN, EXPLORER_TX_URL } from "./constants.js";
+import { FEE_ATOMIC, ZANO_ASSET_ID, KNOWN_ASSETS, MIXIN } from "./constants.js";
 import { walletRpc, refreshBalance } from "./wallet.js";
 import { playSendSound } from "./audio.js";
 
@@ -90,11 +90,27 @@ export async function send() {
   });
 
   if (logEl) {
-    logEl.innerHTML = [
-      `<div><strong>Asset</strong>: ${ticker}</div>`,
-      `<div><strong>Amount</strong>: ${atomicToDisplayString(amountAtomic, dp)} ${ticker}</div>`,
-      `<div><strong>To</strong>: <span class="mono" style="word-break:break-all;font-size:.85em">${toRaw}</span></div>`,
-    ].join("");
+    logEl.textContent = "";
+    const lines = [
+      ["Asset", `${ticker}`],
+      ["Amount", `${atomicToDisplayString(amountAtomic, dp)} ${ticker}`],
+    ];
+    for (const [label, value] of lines) {
+      const div = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      div.append(strong, `: ${value}`);
+      logEl.appendChild(div);
+    }
+    const toDiv = document.createElement("div");
+    const toStrong = document.createElement("strong");
+    toStrong.textContent = "To";
+    const toSpan = document.createElement("span");
+    toSpan.className = "mono";
+    toSpan.style.cssText = "word-break:break-all;font-size:.85em";
+    toSpan.textContent = toRaw;
+    toDiv.append(toStrong, ": ", toSpan);
+    logEl.appendChild(toDiv);
   }
 
   // Clear address for next use
