@@ -1,7 +1,7 @@
 const { app } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const net = require("net");
 const { getUserDataPaths, simplewalletBinaryName, getResourcesDir } = require("./config");
 
@@ -213,12 +213,38 @@ async function jsonRpcCall({ url, method, params, id = 0, timeoutMs = 15_000 }) 
 }
 
 // ---------------------------------------------------------------------------
+// Port cleanup — kill orphaned simplewallet processes bound to the RPC port
+// ---------------------------------------------------------------------------
+
+function killProcessOnPort(port) {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync(`netstat -ano | findstr :${port} | findstr LISTENING`, { encoding: "utf8", timeout: 3000 });
+      const pids = new Set();
+      for (const line of out.split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && /^\d+$/.test(pid) && pid !== "0") pids.add(pid);
+      }
+      for (const pid of pids) {
+        try { execSync(`taskkill /PID ${pid} /F`, { timeout: 3000 }); } catch {}
+      }
+    } else {
+      try { execSync(`lsof -ti :${port} | xargs kill -9`, { timeout: 3000 }); } catch {}
+    }
+  } catch {
+    // Best-effort cleanup — ignore errors
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Process lifecycle  (mainWindow ref is injected via init())
 // ---------------------------------------------------------------------------
 
 let mainWindow = null;
 let simplewalletProc = null;
 let simplewalletState = { status: "stopped" };
+let lastStartedWalletFile = null;
 
 function init(win) {
   mainWindow = win;
@@ -235,9 +261,13 @@ function setSimplewalletState(next) {
   }
 }
 
-function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort }) {
+async function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort }) {
   if (simplewalletProc && simplewalletProc.exitCode == null) {
-    throw new Error("simplewallet is already running");
+    // Auto-kill stale process instead of failing — handles stuck handles
+    // from previous start attempts or UI double-clicks.
+    try { simplewalletProc.kill(); } catch {}
+    await new Promise(r => setTimeout(r, 500));
+    simplewalletProc = null;
   }
   if (!simplewalletExePath || !fs.existsSync(simplewalletExePath)) {
     const bin = simplewalletBinaryName();
@@ -261,6 +291,7 @@ function startSimplewallet({ walletFile, password, simplewalletExePath, daemonAd
   ];
 
   intentionalStop = false;
+  lastStartedWalletFile = walletFile;
   setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null });
 
   const exeDir = path.dirname(simplewalletExePath);
@@ -364,4 +395,6 @@ module.exports = {
   waitForWalletRpcReady,
   jsonRpcCall,
   spawnSimplewalletEnv,
+  killProcessOnPort,
+  getLastStartedWalletFile() { return lastStartedWalletFile; },
 };

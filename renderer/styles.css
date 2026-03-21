@@ -1124,6 +1124,44 @@ select:disabled {
   margin-top: 4px;
 }
 
+/* ── Send confirmation dialog ─────────────────────────────────────────── */
+
+.sendConfirmBody {
+  text-align: left;
+}
+.confirmField {
+  margin-top: 14px;
+}
+.confirmLabel {
+  font-size: .82rem;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.confirmAddress {
+  font-size: .88rem;
+  word-break: break-all;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+.confirmAmount {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.confirmUsd {
+  margin-top: 4px;
+  font-size: .95rem;
+}
+.confirmFee {
+  font-size: .9rem;
+  color: var(--text-secondary);
+}
+
 /* ── Swap view ────────────────────────────────────────────────────────── */
 
 /* ── Swap ─────────────────────────────────────────────────────────────── */
