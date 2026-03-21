@@ -465,12 +465,16 @@ function wireUi() {
     const logEl         = $("restoreWalletLog");
     logEl.textContent   = "";
     const name          = $("restoreWalletName").value.trim();
-    const seedPhrase    = $("restoreSeedPhrase").value.trim();
+    // Normalize seed: collapse whitespace, strip non-alpha chars, lowercase
+    const seedPhraseRaw = $("restoreSeedPhrase").value || "";
+    const seedPhrase    = seedPhraseRaw.replace(/[^\w\s]/g, " ").trim().replace(/\s+/g, " ").toLowerCase();
     const seedPassphrase= $("restoreSeedPassphrase").value || "";
     const password      = $("restoreWalletPassword").value;
     const password2     = $("restoreWalletPassword2").value;
     if (!name)             return appendLog(logEl, "Enter a wallet name.");
     if (!seedPhrase)       return appendLog(logEl, "Enter your seed phrase.");
+    const wordCount = seedPhrase.split(" ").length;
+    if (wordCount < 24 || wordCount > 26) return appendLog(logEl, `Seed phrase must be 24, 25, or 26 words. You entered ${wordCount} words.`);
     if (!validatePasswords(password, password2, logEl)) return;
     if (!selectedRestorePath)   return appendLog(logEl, "Select wallet location first.");
 
@@ -764,7 +768,53 @@ function wireUi() {
     updateSendAmountModeUi();
   });
 
-  $("btnSend")?.addEventListener("click", async () => {
+  $("btnSend")?.addEventListener("click", () => {
+    const address = $("sendAddress")?.value.trim();
+    const amtStr = $("sendAmount")?.value;
+    const logEl = $("sendLog");
+
+    if (!address) { appendLog(logEl, "Missing destination address."); return; }
+    if (!amtStr)  { appendLog(logEl, "Missing amount."); return; }
+
+    const assetId = state.selectedAssetId;
+    const info = state.assetsById?.get(assetId) || KNOWN_ASSETS[assetId] || {};
+    const ticker = info.ticker || "ASSET";
+    const dp = info.decimalPoint ?? 12;
+    const raw = parseFloat(amtStr);
+    if (Number.isNaN(raw) || raw <= 0) { appendLog(logEl, "Amount must be > 0."); return; }
+
+    let zanoAmount = raw;
+    let usdValue = null;
+    const price = getZanoPriceUsd();
+
+    if (state.sendAmountMode === "USD" && assetId === ZANO_ASSET_ID) {
+      if (!price) { appendLog(logEl, "Cannot send in USD mode: price data unavailable."); return; }
+      zanoAmount = raw / price;
+      usdValue = raw;
+    } else if (price && assetId === ZANO_ASSET_ID) {
+      usdValue = raw * price;
+    }
+
+    const confirmAddr = $("confirmAddress");
+    const confirmAmt  = $("confirmAmount");
+    const confirmUsd  = $("confirmUsdValue");
+    if (confirmAddr) confirmAddr.textContent = address;
+    if (confirmAmt)  confirmAmt.textContent  = `${zanoAmount.toFixed(dp > 6 ? 6 : dp)} ${ticker}`;
+    if (confirmUsd) {
+      confirmUsd.textContent = usdValue != null
+        ? `≈ $${usdValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : "";
+    }
+
+    $("sendConfirmDialog")?.showModal();
+  });
+
+  $("btnConfirmCancel")?.addEventListener("click", () => {
+    $("sendConfirmDialog")?.close();
+  });
+
+  $("btnConfirmSend")?.addEventListener("click", async () => {
+    $("sendConfirmDialog")?.close();
     try { await send(); }
     catch (err) { appendLog($("sendLog"), err?.message || String(err)); }
   });
@@ -788,6 +838,7 @@ function wireUi() {
       const maxZ    = getMaxZano();
       if (Number.isFinite(maxZ)) next = Math.min(next, maxZ);
       sendAmountEl.value = next;
+      updateSendAmountEquivalent();
     }, { passive: false });
     sendAmountEl.addEventListener("input", () => {
       const raw  = parseFloat(sendAmountEl.value);

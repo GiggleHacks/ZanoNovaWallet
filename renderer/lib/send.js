@@ -2,8 +2,8 @@ import { createLogger } from "./logger.js";
 import { $, appendLog } from "./dom.js";
 import { state } from "./state.js";
 import { parseAmountToAtomic, atomicToDisplayString } from "./currency.js";
-import { FEE_ATOMIC, ZANO_ASSET_ID, KNOWN_ASSETS, MIXIN, EXPLORER_TX_URL } from "./constants.js";
-import { walletRpc } from "./wallet.js";
+import { FEE_ATOMIC, ZANO_ASSET_ID, KNOWN_ASSETS, MIXIN } from "./constants.js";
+import { walletRpc, refreshBalance } from "./wallet.js";
 import { playSendSound } from "./audio.js";
 
 const log = createLogger("send");
@@ -40,7 +40,23 @@ export async function send() {
     return;
   }
 
-  const amountAtomic = parseAmountToAtomic(amtStr, dp);
+  // Convert USD to ZANO if user entered amount in USD mode
+  let finalAmtStr = amtStr;
+  if (state.sendAmountMode === "USD" && assetId === ZANO_ASSET_ID) {
+    const price = state.usdPrices?.ZANO?.usd;
+    if (typeof price !== "number" || price <= 0) {
+      appendLog(logEl, "Cannot send in USD mode: price data unavailable.");
+      return;
+    }
+    const zanoAmount = parseFloat(amtStr) / price;
+    if (!Number.isFinite(zanoAmount) || zanoAmount <= 0) {
+      appendLog(logEl, "Invalid USD amount.");
+      return;
+    }
+    finalAmtStr = zanoAmount.toFixed(12);
+  }
+
+  const amountAtomic = parseAmountToAtomic(finalAmtStr, dp);
   if (amountAtomic <= 0n) { appendLog(logEl, "Amount must be > 0."); return; }
 
   const assetBal = state.balancesById.get(assetId);
@@ -74,22 +90,36 @@ export async function send() {
   });
 
   if (logEl) {
-    const result      = res?.result || {};
-    const tx          = result.tx_details || {};
-    const txId        = tx.id || result.tx_hash || tx.tx_hash || "";
-    const explorerUrl = txId ? `${EXPLORER_TX_URL}${txId}` : "";
-    logEl.innerHTML = [
-      `<div><strong>Transaction ID</strong>: ${explorerUrl ? `<a href="${explorerUrl}" target="_blank" rel="noopener noreferrer">${txId}</a>` : txId || "-"}</div>`,
-      `<div><strong>Asset</strong>: ${ticker}</div>`,
-      `<div><strong>Amount</strong>: ${atomicToDisplayString(amountAtomic, dp)} ${ticker}</div>`,
-      `<div><strong>Height</strong>: ${tx.height ?? 0}</div>`,
-      `<div><strong>Confirmation</strong>: ${tx.confirmations ?? 0}</div>`,
-      (tx.size || tx.tx_size || tx.blob_size) ? `<div><strong>Transaction size</strong>: ${tx.size || tx.tx_size || tx.blob_size} bytes</div>` : "",
-      `<div><strong>Payment ID</strong>: ${tx.payment_id || result.payment_id || "-"}</div>`,
-      (tx.comment || result.comment) ? `<div><strong>Comment</strong>: ${tx.comment || result.comment}</div>` : "",
-    ].filter(Boolean).join("");
+    logEl.textContent = "";
+    const lines = [
+      ["Asset", `${ticker}`],
+      ["Amount", `${atomicToDisplayString(amountAtomic, dp)} ${ticker}`],
+    ];
+    for (const [label, value] of lines) {
+      const div = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      div.append(strong, `: ${value}`);
+      logEl.appendChild(div);
+    }
+    const toDiv = document.createElement("div");
+    const toStrong = document.createElement("strong");
+    toStrong.textContent = "To";
+    const toSpan = document.createElement("span");
+    toSpan.className = "mono";
+    toSpan.style.cssText = "word-break:break-all;font-size:.85em";
+    toSpan.textContent = toRaw;
+    toDiv.append(toStrong, ": ", toSpan);
+    logEl.appendChild(toDiv);
   }
+
+  // Clear address for next use
+  const addrEl = $("sendAddress");
+  if (addrEl) addrEl.value = "";
 
   log.info("send ok, txId:", res?.result?.tx_details?.id || res?.result?.tx_hash || "unknown");
   await playSendSound().catch(() => {});
+
+  // Refresh balance immediately so the UI reflects the deducted amount
+  refreshBalance().catch(() => {});
 }

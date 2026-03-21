@@ -512,6 +512,29 @@
         </form>
       </dialog>
 
+      <dialog id="sendConfirmDialog" class="dialog">
+        <div class="dialogBody sendConfirmBody">
+          <h3>Confirm Transaction</h3>
+          <div class="confirmField">
+            <div class="confirmLabel">To address</div>
+            <div id="confirmAddress" class="confirmAddress mono"></div>
+          </div>
+          <div class="confirmField">
+            <div class="confirmLabel">Amount</div>
+            <div id="confirmAmount" class="confirmAmount"></div>
+          </div>
+          <div id="confirmUsdValue" class="confirmUsd hint"></div>
+          <div class="confirmField">
+            <div class="confirmLabel">Fee</div>
+            <div class="confirmFee">0.01 ZANO</div>
+          </div>
+          <div class="row" style="margin-top:18px">
+            <button id="btnConfirmCancel" class="btn" type="button">Cancel</button>
+            <button id="btnConfirmSend" class="btn primary" type="button">Confirm &amp; Send</button>
+          </div>
+        </div>
+      </dialog>
+
       <dialog id="receiveDialog" class="dialog">
         <form method="dialog" class="dialogBody">
           <h3>Receive</h3>

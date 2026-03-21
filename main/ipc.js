@@ -91,10 +91,23 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
   try {
     const url = `http://${rpcBindIp}:${rpcBindPort}/json_rpc`;
     await sw.jsonRpcCall({ url, method: "getaddress", params: {}, timeoutMs: 1500 });
-    sw.setSimplewalletState({ status: "running", rpcUrl: url, reusedExisting: true });
-    return { ok: true, state: sw.getSimplewalletState(), rpcUrl: url, reusedExisting: true };
+
+    // If a different wallet file is being opened, don't reuse — kill and respawn.
+    const lastWallet = sw.getLastStartedWalletFile();
+    if (lastWallet && walletFile && lastWallet !== walletFile) {
+      sw.stopSimplewallet();
+      await new Promise(r => setTimeout(r, 500));
+      sw.killProcessOnPort(rpcBindPort);
+      await new Promise(r => setTimeout(r, 300));
+      // Fall through to spawn a fresh process below.
+    } else {
+      sw.setSimplewalletState({ status: "running", rpcUrl: url, reusedExisting: true });
+      return { ok: true, state: sw.getSimplewalletState(), rpcUrl: url, reusedExisting: true };
+    }
   } catch {
-    // Not available — proceed to spawn.
+    // Not available — kill any orphaned process on the port before spawning.
+    sw.killProcessOnPort(rpcBindPort);
+    await new Promise(r => setTimeout(r, 300));
   }
 
   const simplewalletExePath = sw.resolveSimplewalletExePath(overrideExe);
@@ -102,7 +115,7 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
     const bin = simplewalletBinaryName();
     throw new Error(`${bin} not found. Bundle it with the app or choose a source binary in Settings → Wallet so the app can copy it into its data directory.`);
   }
-  sw.startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort });
+  await sw.startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort });
   const ready = await sw.waitForWalletRpcReady({ rpcBindIp, rpcBindPort }).catch((e) => {
     const st = sw.getSimplewalletState();
     if (st.status !== "stopped") sw.setSimplewalletState({ status: "stopped" });
