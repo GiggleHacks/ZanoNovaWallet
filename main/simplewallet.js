@@ -29,7 +29,17 @@ function copyFileIfNeeded(src, dest) {
   }
   if (!shouldCopy) return;
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.copyFileSync(src, dest);
+  try {
+    fs.copyFileSync(src, dest);
+  } catch (err) {
+    if (err.code === "EBUSY") {
+      // File is locked — try to delete and re-copy
+      try { fs.unlinkSync(dest); } catch {}
+      fs.copyFileSync(src, dest);
+    } else {
+      throw err;
+    }
+  }
 }
 
 function copyDirectoryRecursive(srcDir, destDir) {

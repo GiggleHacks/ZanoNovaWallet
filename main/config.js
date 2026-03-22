@@ -5,7 +5,7 @@ const fs = require("fs");
 const DEFAULTS = Object.freeze({
   walletRpcBindIp: "127.0.0.1",
   walletRpcBindPort: 12233,
-  daemonAddress: "64.111.93.25:10500",
+  daemonAddress: "37.27.100.59:10500",
   lastWalletPath: "",
   soundEnabled: true,
   soundVolume: 0.9,

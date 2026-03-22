@@ -36,8 +36,8 @@ async function getCurrentNodeLabel() {
     const cfg = await window.zano.configGet();
     const addr = (cfg?.daemonAddress || "").trim();
     if (!addr) return "node";
+    if (addr === "37.27.100.59:10500") return "Zano Official Node";
     if (addr === "64.111.93.25:10500") return "ZanoNova Node";
-    if (addr === "37.27.100.59:10500") return "Zano.org Official Node";
     return addr;
   } catch {
     return "node";
@@ -502,11 +502,20 @@ function wireUi() {
       const walletInput2 = $("inputWalletFile");
       if (walletInput2) walletInput2.value = walletFile;
       setSessionPassword(password);
-      await startWalletRpc(password).catch((e) => appendLog(logEl, e?.message || String(e)));
-      await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
-      await refreshBalance().catch(() => {});
-      await refreshHistory(0).catch(() => {});
+
+      // Switch to wallet view first so the user sees progress
       switchView("wallet");
+
+      // Now start the backend — errors show on the wallet view's log area
+      try {
+        await startWalletRpc(password);
+        await ensureAssetWhitelisted(FUSD_ASSET_ID).catch(() => {});
+        await refreshBalance().catch(() => {});
+        await refreshHistory(0).catch(() => {});
+      } catch (rpcErr) {
+        const walletLog = $("logArea");
+        if (walletLog) appendLog(walletLog, rpcErr?.message || String(rpcErr));
+      }
     } catch (e) {
       appendLog(logEl, e?.message || String(e));
     } finally {

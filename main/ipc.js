@@ -71,7 +71,7 @@ ipcMain.handle("simplewallet:resolveExe", async (_evt, overridePath) => {
   // This prevents EBUSY errors when simplewallet.exe is locked by a stale process
   sw.killProcessOnPort(rpcBindPort);
   // Wait a moment for the file handles to be released
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 500));
   const resolved = sw.resolveSimplewalletExePath(overridePath);
   return { resolved, candidates: sw.simplewalletExeCandidates(overridePath) };
 });
@@ -161,6 +161,18 @@ function collectOutput(proc) {
   });
 }
 
+/** Build a user-friendly hint for known Windows exit codes related to DLL issues. */
+function dllErrorHint(exitCode) {
+  if (process.platform !== "win32") return "";
+  // 0xC0000135 = STATUS_DLL_NOT_FOUND
+  if (exitCode === 3221225781)
+    return " simplewallet could not find a required .dll file. Make sure all DLL files from the Zano build are in the same folder as simplewallet.exe, then point Settings → Wallet at that folder.";
+  // 0xC000007B = STATUS_BAD_IMAGE_FORMAT (architecture mismatch / corrupt DLL)
+  if (exitCode === 3221225595)
+    return " simplewallet failed to load because of a DLL architecture mismatch (32-bit vs 64-bit) or a corrupt DLL. Delete the folder at %APPDATA%\\zano-nova\\simplewallet-runtime, then restart the app so it can re-copy the files. If the error persists, download a fresh Zano build matching your system (64-bit) and point Settings → Wallet at it.";
+  return "";
+}
+
 ipcMain.handle("wallet:generate", async (_evt, input) => {
   const { walletsDir } = getUserDataPaths();
 
@@ -189,11 +201,7 @@ ipcMain.handle("wallet:generate", async (_evt, input) => {
     return { ok: true, output: out.stdout + (out.stderr ? "\n" + out.stderr : "") };
   }
 
-  const dllHint =
-    process.platform === "win32" && out.code === 3221225781
-      ? " The selected simplewallet source is missing required .dll files. Point Settings → Wallet at a folder or executable from a full Zano build so the app can copy the runtime files into its data directory."
-      : "";
-  throw new Error(`Wallet generation failed (exit ${out.code}).${dllHint} ${out.stderr || out.stdout}`);
+  throw new Error(`Wallet generation failed (exit ${out.code}).${dllErrorHint(out.code)} ${out.stderr || out.stdout}`);
 });
 
 ipcMain.handle("wallet:restore", async (_evt, input) => {
@@ -237,7 +245,7 @@ ipcMain.handle("wallet:restore", async (_evt, input) => {
       return { ok: true, output: out.stdout + (out.stderr ? "\n" + out.stderr : "") };
     }
     // Include raw output so user can see what simplewallet actually said
-    throw new Error(`Wallet restore failed (exit ${out.code}).\n${out.stderr || out.stdout}`);
+    throw new Error(`Wallet restore failed (exit ${out.code}).${dllErrorHint(out.code)}\n${out.stderr || out.stdout}`);
   }
   return { ok: true, output: out.stdout };
 });
