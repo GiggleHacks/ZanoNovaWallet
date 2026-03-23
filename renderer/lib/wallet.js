@@ -110,6 +110,16 @@ export function clearWalletHistoryState() {
   updateHistoryPager(0, false);
 }
 
+export function clearBalanceState() {
+  state.balancesById.clear();
+  state.assetsById.clear();
+  state.lastZanoUnlockedAtomic = null;
+  state.lastZanoTotalAtomic = null;
+  state.daemonHeight = null;
+  state.walletHeight = null;
+  try { localStorage.removeItem(HEADER_SNAPSHOT_LS_KEY); } catch {}
+}
+
 // ---------------------------------------------------------------------------
 // RPC
 // ---------------------------------------------------------------------------
@@ -242,20 +252,12 @@ function populateBalanceMaps(balances) {
   state.assetsById.clear();
   for (const b of balances) {
     const ai = b.asset_info || {};
-    let assetId = ai.asset_id || "";
+    const assetId = ai.asset_id || "";
     if (!assetId) continue;
 
-    // Ticker-based fallback: if the RPC returns fUSD under a different
-    // asset_id than the hardcoded constant, map it to the canonical id so
-    // the rest of the UI finds it under FUSD_ASSET_ID.
     const ticker = ai.ticker || KNOWN_ASSETS[assetId]?.ticker || "ASSET";
-    if (ticker === "fUSD" && assetId !== FUSD_ASSET_ID) {
-      log.info("fUSD asset_id remapped:", assetId, "->", FUSD_ASSET_ID);
-      assetId = FUSD_ASSET_ID;
-    }
-
     const dp = typeof ai.decimal_point === "number" ? ai.decimal_point : 12;
-    const fullName = ai.full_name || ticker;
+    const fullName = ai.full_name || KNOWN_ASSETS[assetId]?.fullName || ticker;
     state.assetsById.set(assetId, { ticker, fullName, decimalPoint: dp });
     try {
       state.balancesById.set(assetId, {
@@ -599,6 +601,34 @@ export function renderBalances(balances) {
   }
 }
 
+function getTransferGroups(transfer) {
+  const groups = Array.isArray(transfer?.subtransfers_by_pid)
+    ? transfer.subtransfers_by_pid
+    : null;
+  if (groups?.length) {
+    return groups.map((group) => ({
+      payment_id: group?.payment_id || "",
+      subtransfers: Array.isArray(group?.subtransfers) ? group.subtransfers : [],
+    }));
+  }
+  return [{
+    payment_id: transfer?.payment_id || "",
+    subtransfers: Array.isArray(transfer?.subtransfers) ? transfer.subtransfers : [],
+  }];
+}
+
+function getTransferSubtransfers(transfer) {
+  return getTransferGroups(transfer).flatMap((group) => group.subtransfers);
+}
+
+function getTransferPaymentId(transfer) {
+  for (const group of getTransferGroups(transfer)) {
+    const paymentId = String(group?.payment_id || "").trim();
+    if (paymentId) return paymentId;
+  }
+  return String(transfer?.payment_id || "").trim();
+}
+
 export function renderHistory(result) {
   const root = $("history");
   if (!root) return;
@@ -623,7 +653,7 @@ export function renderHistory(result) {
       }
     }
     const isPending = confirmations < CONFIRMATION_THRESHOLD;
-    const subs      = Array.isArray(t.subtransfers) ? t.subtransfers : [];
+    const subs = getTransferSubtransfers(t);
 
     const displaySubs = subs;
     const primarySub = displaySubs[0] || {};
@@ -654,7 +684,7 @@ export function renderHistory(result) {
     const confLabel   = confCount >= CONFIRMATION_THRESHOLD
       ? `Confirmations ${CONFIRMATION_THRESHOLD}+ (confirmed)`
       : `Confirmations ${confDisplay}/${CONFIRMATION_THRESHOLD}`;
-    const paymentId   = t.payment_id || "";
+    const paymentId   = getTransferPaymentId(t);
     const explorerUrl = txHash ? `${EXPLORER_TX_URL}${txHash}` : "";
 
     const el = tmpl.cloneNode(true).firstElementChild;
@@ -714,18 +744,43 @@ export function renderHistory(result) {
   }
 }
 
-export function updateHistoryPager(page, hasNext) {
-  const label = $("historyPageLabel");
+export function updateHistoryPager(page, hasNext, totalTransfers) {
   const prev  = $("btnHistoryPrev");
   const next  = $("btnHistoryNext");
-  if (!label || !prev || !next) return;
-  label.textContent = `Page ${page + 1}`;
+  const nums  = $("historyPageNums");
+  if (!prev || !next) return;
+
   prev.disabled = page <= 0;
   next.disabled = !hasNext;
   prev.tabIndex = prev.disabled ? -1 : 0;
   next.tabIndex = next.disabled ? -1 : 0;
   prev.setAttribute("aria-disabled", String(prev.disabled));
   next.setAttribute("aria-disabled", String(next.disabled));
+
+  // Build numbered page buttons: ← 7 8 [9] 10 11 →
+  if (!nums) return;
+  nums.replaceChildren();
+
+  const totalPages = totalTransfers != null
+    ? Math.max(1, Math.ceil(totalTransfers / HISTORY_PAGE_SIZE))
+    : (hasNext ? page + 2 : page + 1);
+
+  const radius = 2; // show ±2 pages around current
+  const start = Math.max(0, page - radius);
+  const end = Math.min(totalPages - 1, page + radius);
+
+  for (let i = start; i <= end; i++) {
+    const btn = document.createElement("button");
+    btn.className = "pagerNum" + (i === page ? " active" : "");
+    btn.type = "button";
+    btn.textContent = String(i + 1);
+    if (i !== page) {
+      btn.addEventListener("click", () => refreshHistory(i));
+    } else {
+      btn.disabled = true;
+    }
+    nums.appendChild(btn);
+  }
 }
 
 export function updateSendDialogBalances() {
@@ -784,17 +839,31 @@ export async function refreshBalance() {
 
 export async function refreshHistory(page = state.historyPage) {
   state.historyPage = page;
-  const res = await walletRpc("get_recent_txs_and_info2", {
+  const shouldUpdateProvisionInfo = page === 0 || state.walletHeight == null;
+  const historyParams = {
     count:              HISTORY_PAGE_SIZE,
     offset:             page * HISTORY_PAGE_SIZE,
     order:              "FROM_END_TO_BEGIN",
-    exclude_mining_txs: true,
+    exclude_mining_txs: state.hideMiningTxs !== false,
     exclude_unconfirmed: false,
-    update_provision_info: true,
-  });
+    update_provision_info: shouldUpdateProvisionInfo,
+  };
+
+  let res;
+  try {
+    res = await walletRpc("get_recent_txs_and_info3", historyParams);
+  } catch (err) {
+    log.warn("history v3 unavailable, falling back to v2:", err?.message || String(err));
+    res = await walletRpc("get_recent_txs_and_info2", historyParams);
+  }
   const result    = res?.result;
   const transfers = result?.transfers || [];
+  const totalTransfers = result?.total_transfers ?? null;
   const hasNext   = transfers.length === HISTORY_PAGE_SIZE;
+
+  // Track wallet's sync height from RPC for post-connect sync monitoring
+  const walletHeight = result?.pi?.curent_height ?? result?.pi?.current_height ?? null;
+  if (walletHeight) state.walletHeight = walletHeight;
 
   // "New income" detection:
   // - Must trigger even for unconfirmed txs.
@@ -813,7 +882,7 @@ export async function refreshHistory(page = state.historyPage) {
   let hasNewIncome = false;
   let maxIncomeTs = 0;
   for (const t of transfers) {
-    const subs      = Array.isArray(t.subtransfers) ? t.subtransfers : [];
+    const subs = getTransferSubtransfers(t);
     const hasIncome = subs.some((s) => s.is_income);
     if (!hasIncome) continue;
     const hash = t.tx_hash
@@ -845,7 +914,7 @@ export async function refreshHistory(page = state.historyPage) {
     try { localStorage.setItem(LS_LAST_INCOME_TS_KEY, String(maxIncomeTs)); } catch {}
   }
   renderHistory(result);
-  updateHistoryPager(page, hasNext);
+  updateHistoryPager(page, hasNext, totalTransfers);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Zano Nova — Premium Wallet UI
    Aesthetic: Deep-space luxury fintech. Rich depth, glass morphism,
-   atmospheric gradients, refined Outfit typography.
+   atmospheric gradients, refined wallet typography.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -51,8 +51,8 @@
   --shadow-glow-primary: 0 4px 20px rgba(59,108,255,.25);
   --shadow-glow-aqua: 0 4px 20px var(--aqua-glow);
 
-  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --sans: 'Outfit', system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --sans: "Segoe UI", "Helvetica Neue", Arial, system-ui, -apple-system, sans-serif;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -178,7 +178,7 @@ body::after {
 
 .status {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   color: var(--text-secondary);
   font-size: 0.78rem;
@@ -195,16 +195,24 @@ body::after {
   position: relative;
 }
 
-/* Make Connecting feel more alive (lightweight shimmer) */
+/* Make Connecting feel more alive — terminal-style blinking cursor */
 .status.status-connecting .statusSub {
   animation: statusSubShimmer 1.25s ease-in-out infinite;
+}
+.status.status-connecting .statusSub::after {
+  content: "\2588";
+  animation: termBlink .7s steps(2) infinite;
+  margin-left: 2px;
+  font-size: 0.65rem;
+  vertical-align: baseline;
+  color: var(--primary);
 }
 .statusSub {
   font-size: 0.7rem;
   letter-spacing: .02em;
   color: var(--text-tertiary);
   text-transform: none;
-  max-width: 280px;
+  max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -230,28 +238,31 @@ body::after {
   height: 4px;
   width: 46%;
   border-radius: 999px;
-  background: linear-gradient(90deg, transparent, rgba(255,184,54,.98), transparent);
-  filter: drop-shadow(0 0 18px rgba(255,184,54,.38));
+  background: linear-gradient(90deg, transparent, rgba(59,108,255,.95), rgba(255,255,255,.6), transparent);
+  filter: drop-shadow(0 0 18px rgba(59,108,255,.38));
   animation: sync-sweep 0.9s var(--ease-out) infinite;
 }
 
 /* Phase-aware: make Connecting feel "louder" while staying accurate */
 #swStatus.status-connecting[data-conn-detail="daemon_ok"] .statusText::before {
-  background: linear-gradient(90deg, transparent, rgba(0,229,208,.98), transparent);
+  background: linear-gradient(90deg, transparent, rgba(0,229,208,.95), rgba(255,255,255,.5), transparent);
   filter: drop-shadow(0 0 20px rgba(0,229,208,.40));
   animation-duration: 0.82s;
 }
 
 #swStatus.status-connecting[data-conn-detail="wallet_loading"] .statusText::before {
-  background: linear-gradient(90deg, transparent, rgba(59,108,255,1), transparent);
+  background: linear-gradient(90deg, transparent, rgba(59,108,255,1), rgba(255,255,255,.5), transparent);
   filter: drop-shadow(0 0 22px rgba(59,108,255,.42));
   animation-duration: 0.78s;
 }
 
 #swStatus.status-connecting[data-conn-detail="wallet_resync"] .statusText::before {
-  background: linear-gradient(90deg, transparent, rgba(255,184,54,1), rgba(59,108,255,.90), transparent);
-  filter: drop-shadow(0 0 24px rgba(255,184,54,.40));
-  animation-duration: 0.68s;
+  /* Real progress bar — width driven by --sync-pct CSS variable from JS */
+  width: var(--sync-pct, 46%);
+  background: linear-gradient(90deg, rgba(59,108,255,1), rgba(91,138,255,.90), rgba(255,255,255,.7));
+  filter: drop-shadow(0 0 24px rgba(59,108,255,.45));
+  animation: none;
+  transition: width .8s ease;
 }
 
 #swStatus.status-offline[data-conn-detail="daemon_bad"] .dot.bad {
@@ -272,8 +283,8 @@ body::after {
   box-shadow: 0 0 12px var(--success-glow), 0 0 4px var(--success);
 }
 .dot.warn {
-  background: var(--warn);
-  box-shadow: 0 0 26px rgba(255,184,54,.46), 0 0 10px rgba(255,184,54,.28);
+  background: var(--primary);
+  box-shadow: 0 0 26px rgba(59,108,255,.50), 0 0 10px rgba(59,108,255,.30);
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
 .dot.warn::after {
@@ -281,8 +292,8 @@ body::after {
   position: absolute;
   inset: -6px;
   border-radius: 999px;
-  border: 1px solid rgba(255,184,54,.62);
-  box-shadow: 0 0 36px rgba(255,184,54,.28);
+  border: 1px solid rgba(59,108,255,.62);
+  box-shadow: 0 0 36px rgba(59,108,255,.30);
   animation: connect-ring 0.82s linear infinite;
 }
 .dot.bad {
@@ -310,6 +321,10 @@ body::after {
 @keyframes statusSubShimmer {
   0%, 100% { opacity: .75; filter: saturate(1); }
   50% { opacity: 1; filter: saturate(1.25) brightness(1.1); }
+}
+@keyframes termBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
 
 /* ── Shell Layout ─────────────────────────────────────────────────────── */
@@ -810,10 +825,43 @@ select:disabled {
 .recvAssetRow {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   margin-bottom: 4px;
+  text-align: left;
 }
 .recvAssetRow .hint { margin-top: 0; }
+
+.recvSupportedAssets {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.recvAssetTag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+.recvAssetTag.zano {
+  background: rgba(59,108,255,.15);
+  color: #5B8AFF;
+  border: 1px solid rgba(59,108,255,.25);
+}
+.recvAssetTag.fusd {
+  background: rgba(0,214,143,.12);
+  color: #00D68F;
+  border: 1px solid rgba(0,214,143,.22);
+}
+.recvAssetTag.other {
+  background: rgba(155,127,255,.10);
+  color: var(--lavender);
+  border: 1px solid rgba(155,127,255,.18);
+}
 
 /* ── Hints & kickers ──────────────────────────────────────────────────── */
 
@@ -856,13 +904,65 @@ select:disabled {
   border: 1px solid rgba(59,108,255,.06);
   border-radius: var(--radius-sm);
   min-height: 80px;
+  max-height: 300px;
   flex: 1 1 auto;
-  overflow: auto;
+  overflow-y: auto;
   font-family: var(--mono);
   font-size: 0.78rem;
   white-space: pre-wrap;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+/* ── Settings section helpers ─────────────────────────────────────────── */
+
+.walletSectionHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.versionTag {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: rgba(59,108,255,.08);
+  border: 1px solid rgba(59,108,255,.15);
+  border-radius: 999px;
+  padding: 1px 8px;
+  letter-spacing: .03em;
+}
+.walletActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.logActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+/* Developer logs dialog */
+.devLogsBody {
+  width: min(700px, calc(100vw - 40px));
+}
+.devLog {
+  margin: 12px 0;
+  padding: 14px 16px;
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(59,108,255,.06);
+  border-radius: var(--radius-sm);
+  min-height: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 /* ── Wallet View ──────────────────────────────────────────────────────── */
@@ -2443,27 +2543,102 @@ select:disabled {
   display: none;
 }
 
+/* ── Sync progress (seed restore / resync) ───────────────────────────── */
+
+.syncProgress {
+  height: 3px;
+  background: rgba(255,255,255,.06);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.syncProgressFill {
+  height: 100%;
+  background: var(--accent, #3b6cff);
+  border-radius: 2px;
+  transition: width .6s ease;
+  min-width: 2%;
+}
+.syncBanner {
+  text-align: center;
+  padding: 10px 8px;
+  font-size: 0.82rem;
+  color: var(--text-tertiary, #888);
+  letter-spacing: .02em;
+}
+.tx.txPreview {
+  opacity: .55;
+  border-style: dashed;
+}
+
 /* ── History pager ────────────────────────────────────────────────────── */
 
-.historyPager {
+.historyFooter {
   margin-top: 12px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
 }
-.pagerLabel {
-  font-size: 0.74rem;
-  color: var(--text-tertiary);
+.historyPager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pagerBtn {
+  min-width: 32px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+.pagerNums {
+  display: flex;
+  gap: 2px;
+}
+.pagerNum {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
   font-weight: 500;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.pagerNum:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: rgba(59,108,255,.08);
+  color: var(--text-primary);
+}
+.pagerNum.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+  cursor: default;
+  font-weight: 600;
+}
+.miningToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.miningToggle input[type="checkbox"] {
+  accent-color: var(--primary);
+  cursor: pointer;
 }
 
 /* ── Dialogs ──────────────────────────────────────────────────────────── */
 
 .dialog::backdrop {
-  background: rgba(5,8,16,.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(5,8,16,.5);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .dialog {

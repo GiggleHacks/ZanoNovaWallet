@@ -120,13 +120,15 @@ let _walletRpcReady = false;
 
 /**
  * Gate wallet action buttons based on wallet RPC readiness.
- * Send and Refresh require the wallet RPC to be live; Receive is always usable.
+ * Send, Receive, and Refresh require the wallet RPC to be live.
  */
 export function setWalletUiGates(walletRpcReady) {
   _walletRpcReady = walletRpcReady;
   const send    = $("btnOpenSend");
+  const receive = $("btnOpenReceive");
   const refresh = $("btnRefreshHistory");
   if (send)    send.disabled    = !walletRpcReady;
+  if (receive) receive.disabled = !walletRpcReady;
   if (refresh) refresh.disabled = !walletRpcReady;
 }
 

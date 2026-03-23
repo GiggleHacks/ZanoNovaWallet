@@ -6,10 +6,9 @@ export const FEE_ATOMIC = 10_000_000_000n; // 0.01 ZANO
 export const MIXIN = 15;
 export const EXPLORER_TX_URL = "https://explorer.zano.org/transaction/";
 
-/** fUSD brand logo (Freedom Dollar) — use when user is interacting with fUSD */
-export const FUSD_LOGO_URL = "https://www.freedomdollar.com/brand/PNG/logo-color.png";
-/** Zano brand logo — use for ZANO asset icon in dropdowns/triggers */
-export const ZANO_LOGO_URL = "https://zano.org/images/assets/logo-symbol.png";
+/** Packaged logos to avoid renderer network fetches for core wallet UI. */
+export const FUSD_LOGO_URL = "./assets/fusd.png";
+export const ZANO_LOGO_URL = "./assets/zano-logo.png";
 
 export const KNOWN_ASSETS = {
   [ZANO_ASSET_ID]: { ticker: "ZANO", decimalPoint: 12, fullName: "Zano" },
@@ -22,13 +21,13 @@ export const DEFAULT_DAEMON_ADDRESS = "37.27.100.59:10500";
 
 export const KNOWN_NODES = [
   { label: "Zano Official Node (default)", address: "37.27.100.59:10500" },
-  { label: "ZanoNova Node", address: "64.111.93.25:10500" },
+  { label: "ZanoNova Node", address: "72.62.241.93:11211" },
 ];
 export const DEFAULT_RPC_BIND_IP    = "127.0.0.1";
 export const DEFAULT_RPC_BIND_PORT  = 12233;
 
 // UI constants
-export const HISTORY_PAGE_SIZE = 5;
+export const HISTORY_PAGE_SIZE = 20;
 export const CONFIRMATION_THRESHOLD = 10;
 export const TOOLTIP_DELAY_MS = 3000;
 export const AUTO_REFRESH_MS = 15_000;

@@ -7,6 +7,7 @@ import { walletRpc, refreshBalance } from "./wallet.js";
 import { playSendSound } from "./audio.js";
 
 const log = createLogger("send");
+const STANDARD_ZANO_ADDRESS_RE = /^Zx[1-9A-HJ-NP-Za-km-z]{90,120}$/;
 
 export async function send() {
   const logEl = $("sendLog");
@@ -27,7 +28,8 @@ export async function send() {
 
   const split    = await walletRpc("split_integrated_address", { integrated_address: toRaw }).catch(() => null);
   const standard = split?.result?.standard_address || "";
-  const valid    = Boolean(standard) || toRaw.startsWith("Zx");
+  const validStandard = STANDARD_ZANO_ADDRESS_RE.test(toRaw);
+  const valid    = Boolean(standard) || validStandard;
   if (!valid) {
     appendLog(logEl, "Address validation failed.");
     appendLog(logEl, split || {});

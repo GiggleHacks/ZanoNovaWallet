@@ -8,6 +8,7 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 const { spawnSync } = require("child_process");
 
 if (process.platform !== "darwin") {
@@ -20,6 +21,22 @@ const stagingDir = path.join(projectRoot, "build", "vendor", "zano-macos");
 const cacheRootDir = path.join(projectRoot, "build", "vendor", "cache", "zano-macos");
 const MACOS_DMG_URL =
   "https://build.zano.org/builds/zano-macos-x64-release-v2.1.15.457[8621a68].dmg";
+// Source: signed hashes published in the official Zano release notes.
+const MACOS_DMG_SHA256 =
+  "13c853b6ece75eafd82a85f46e28db9058591aa791ca893e8f85a9c79c8c41dd";
+
+function sha256Hex(buf) {
+  return crypto.createHash("sha256").update(buf).digest("hex");
+}
+
+function assertExpectedSha256(buf, expected, label) {
+  const actual = sha256Hex(buf);
+  if (actual !== expected) {
+    throw new Error(
+      `${label} SHA-256 mismatch.\nExpected: ${expected}\nActual:   ${actual}\nRefusing to stage an unverified build.`
+    );
+  }
+}
 
 function getCachedDmgPath() {
   let fileName = "zano-macos-release.dmg";
@@ -150,7 +167,9 @@ async function main() {
     const tempDmgPath = path.join(tempDir, "zano.dmg");
     fs.mkdirSync(tempDir, { recursive: true });
     try {
-      fs.writeFileSync(tempDmgPath, Buffer.from(await res.arrayBuffer()));
+      const dmgBuf = Buffer.from(await res.arrayBuffer());
+      assertExpectedSha256(dmgBuf, MACOS_DMG_SHA256, path.basename(MACOS_DMG_URL));
+      fs.writeFileSync(tempDmgPath, dmgBuf);
       fs.renameSync(tempDmgPath, cachedDmgPath);
     } finally {
       try {
@@ -159,6 +178,8 @@ async function main() {
     }
     console.log(`Cached DMG at ${path.relative(projectRoot, cachedDmgPath)}.`);
   } else {
+    const cachedBuf = fs.readFileSync(cachedDmgPath);
+    assertExpectedSha256(cachedBuf, MACOS_DMG_SHA256, path.basename(cachedDmgPath));
     console.log(`Using cached DMG at ${path.relative(projectRoot, cachedDmgPath)}.`);
   }
 

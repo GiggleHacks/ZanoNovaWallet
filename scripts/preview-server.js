@@ -35,31 +35,36 @@ window.zano = {
   configGet:      async () => ({ dataDir: "C:/mock", exePath: "simplewallet.exe", soundEnabled: true, volume: 70 }),
   configSet:      async () => {},
 
-  daemonGetinfo:  async () => ({ result: { height: 100000, status: "OK" } }),
+  daemonGetinfo:  async () => ({ ok: true, height: 100000, status: "OK" }),
 
-  simplewalletResolveExe: async () => ({ found: true, path: "simplewallet.exe" }),
-  simplewalletStart: async () => ({ port: 12111 }),
+  simplewalletResolveExe: async () => ({ resolved: "simplewallet.exe", candidates: ["simplewallet.exe"] }),
+  simplewalletStart: async () => ({ ok: true, rpcUrl: "http://127.0.0.1:12111/json_rpc" }),
   simplewalletStop:  async () => {},
-  simplewalletState: async () => ({ running: true, port: 12111 }),
+  simplewalletState: async () => ({ status: "running", rpcUrl: "http://127.0.0.1:12111/json_rpc" }),
   onSimplewalletState: () => {},
 
   suggestNewWalletPath: async (p) => p || "C:/mock/wallets/new.wallet",
   walletFileExists: async () => false,
-  walletGenerate:   async () => ({ seed: "mock seed words here for testing" }),
-  walletRestore:    async () => ({}),
-  walletShowSeed:   async () => ({ result: { seed_phrase: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" } }),
+  walletGenerate:   async () => ({ ok: true, output: "Wallet generated." }),
+  walletRestore:    async () => ({ ok: true, output: "Wallet restored." }),
+  walletShowSeed:   async () => ({ output: "seed phrase:\nabandon ability able about above absent absorb abstract absurd abuse access accident account accuse achieve acid acoustic acquire across act action actor actress actual" }),
   walletRpc:        async (opts) => {
     const method = typeof opts === "string" ? opts : opts?.method;
-    if (method === "getaddress") return { result: { address: "ZxBvJDuGuEMinyNTMjFVHYkMPaAcjNY6dsXN6kp84KPbQQGUntJiTVFz3VqcQE8HaZNqLUqxNHQYQjdNgUen8D411SkZAVTkT" } };
-    if (method === "getbalance") return { result: { balance: 9640000000000, unlocked_balance: 9640000000000, balances: [
+    if (method === "getaddress") return { ok: true, data: { result: { address: "ZxBvJDuGuEMinyNTMjFVHYkMPaAcjNY6dsXN6kp84KPbQQGUntJiTVFz3VqcQE8HaZNqLUqxNHQYQjdNgUen8D411SkZAVTkT" } } };
+    if (method === "split_integrated_address") {
+      const integrated = String(opts?.params?.integrated_address || "");
+      const address = integrated.startsWith("Zx") ? integrated : "";
+      return { ok: true, data: { result: { standard_address: address } } };
+    }
+    if (method === "getbalance") return { ok: true, data: { result: { balance: 9640000000000, unlocked_balance: 9640000000000, balances: [
       { asset_info: { asset_id: "d6329b5b1f7c0805b5c345f4957554002a2f557845f64d7645dae0e051a6498a", decimal_point: 12, ticker: "ZANO", full_name: "Zano" }, balance: 9640000000000, unlocked: 9640000000000 },
       { asset_info: { asset_id: "f525db4c1fda532fcc2b3cdd8a74be23b0deeac0ea5a9a25fb5d64b2dd62674b", decimal_point: 12, ticker: "fUSD", full_name: "fUSD stablecoin" }, balance: 72580000000000, unlocked: 72580000000000 },
-    ] } };
-    if (method === "get_recent_txs_and_info") return { result: { transfers: [], last_item_index: 0, total_transfers: 0 } };
-    if (method === "transfer") return { result: { tx_details: { id: "mockhash1234567890" } } };
-    return { result: {} };
+    ] } } };
+    if (method === "get_recent_txs_and_info3") return { ok: true, data: { result: { transfers: [], last_item_index: 0, total_transfers: 0, pi: { curent_height: 100000 } } } };
+    if (method === "transfer") return { ok: true, data: { result: { tx_details: { id: "mockhash1234567890" } } } };
+    return { ok: true, data: { result: {} } };
   },
-  walletQr:       async () => "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  walletQr:       async () => ({ ok: true, dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" }),
 
   openFileDialog:  async () => null,
   saveWalletDialog: async () => null,
@@ -97,6 +102,7 @@ const server = http.createServer((req, res) => {
     // Inject mock shim into HTML so the app doesn't crash without Electron
     if (ext === ".html") {
       let html = data.toString("utf8");
+      html = html.replace("script-src 'self';", "script-src 'self' 'unsafe-inline';");
       html = html.replace("</head>", MOCK_SHIM + "\n</head>");
       res.writeHead(200, { "Content-Type": mime, "Content-Length": Buffer.byteLength(html) });
       res.end(html);

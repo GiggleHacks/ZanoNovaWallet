@@ -3,10 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://min-api.cryptocompare.com;"
+    />
     <title>Zano Nova</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -188,11 +189,20 @@
                   <button id="btnRefreshHistory" class="btn" type="button" data-busy-disable>Refresh</button>
                 </div>
               </div>
+              <div id="syncProgressBar" class="syncProgress hidden">
+                <div id="syncProgressFill" class="syncProgressFill"></div>
+              </div>
               <div id="history" class="history"></div>
-              <div class="historyPager">
-                <button id="btnHistoryPrev" class="btn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">Prev</button>
-                <span id="historyPageLabel" class="pagerLabel">Page 1</span>
-                <button id="btnHistoryNext" class="btn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">Next</button>
+              <div class="historyFooter">
+                <div class="historyPager">
+                  <button id="btnHistoryPrev" class="btn pagerBtn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">&larr;</button>
+                  <span id="historyPageNums" class="pagerNums"></span>
+                  <button id="btnHistoryNext" class="btn pagerBtn" type="button" data-busy-disable disabled aria-disabled="true" tabindex="-1">&rarr;</button>
+                </div>
+                <label class="miningToggle">
+                  <span>Hide mining txs</span>
+                  <input id="hideMiningToggle" type="checkbox" checked />
+                </label>
               </div>
             </div>
           </div>
@@ -200,12 +210,15 @@
           <div id="settingsView" class="view hidden">
             <div class="grid2">
               <section class="card wide">
-                <h2>Wallet</h2>
+                <div class="walletSectionHeader">
+                  <h2>Wallet</h2>
+                  <span class="versionTag" id="appVersionTag">v2.7</span>
+                </div>
                 <div class="hint">Create, open, or restore a wallet file.</div>
-                <div class="row" style="margin-top:10px">
-                  <button id="btnAddWallet" class="btn primary" type="button" data-tooltip="Launch the wizard to create a new wallet.">Create new wallet…</button>
-                  <button id="btnLoadWallet" class="btn alt" type="button" data-busy-disable data-tooltip="Open a wallet file that already exists on disk.">Open existing…</button>
-                  <button id="btnOpenRestoreWizard" class="btn" type="button" data-tooltip="Restore a wallet from a saved seed phrase.">Restore from backup…</button>
+                <div class="walletActions">
+                  <button id="btnAddWallet" class="btn primary" type="button" data-tooltip="Launch the wizard to create a new wallet.">Create new wallet</button>
+                  <button id="btnLoadWallet" class="btn alt" type="button" data-busy-disable data-tooltip="Open a wallet file that already exists on disk.">Open existing</button>
+                  <button id="btnOpenRestoreWizard" class="btn" type="button" data-tooltip="Restore a wallet from a saved seed phrase.">Restore from backup</button>
                 </div>
               </section>
 
@@ -244,11 +257,12 @@
 
               <section class="card wide">
                 <h2>Log</h2>
-                <div class="row" style="margin-top:8px">
-                  <button id="btnLocateSimplewallet" class="btn" type="button" data-tooltip="Choose a simplewallet binary so the app can copy it into its own data directory.">Locate simplewallet…</button>
-                  <button id="btnOpenSettings" class="btn" type="button" data-tooltip="Change which node (daemon) this wallet connects to.">Daemon/RPC settings</button>
-                  <button id="btnStartWallet" class="btn alt" type="button" data-tooltip="Start the wallet backend process manually.">Start backend (manual)</button>
-                  <button id="btnStopWallet" class="btn danger" type="button" data-tooltip="Stop the running wallet backend process.">Stop backend</button>
+                <div class="logActions">
+                  <button id="btnOpenSettings" class="btn" type="button">Daemon/RPC settings</button>
+                  <button id="btnStartWallet" class="btn alt" type="button">Start backend</button>
+                  <button id="btnStopWallet" class="btn danger" type="button">Stop backend</button>
+                  <button id="btnDevLogs" class="btn" type="button">Developer logs</button>
+                  <button id="btnLocateSimplewallet" class="btn" type="button">Locate simplewallet</button>
                 </div>
                 <pre class="log" id="logArea"></pre>
               </section>
@@ -536,11 +550,16 @@
       </dialog>
 
       <dialog id="receiveDialog" class="dialog">
-        <form method="dialog" class="dialogBody">
+        <form method="dialog" class="dialogBody recvBody">
           <h3>Receive</h3>
           <div class="recvAssetRow">
             <span id="recvAssetIcon" class="assetContextIconWrap"></span>
-            <div class="hint" id="recvAssetContext">Send ZANO to this address.</div>
+            <div class="hint" id="recvAssetContext">Send <strong>ZANO</strong> or <strong>fUSD</strong> to this address.</div>
+          </div>
+          <div class="recvSupportedAssets">
+            <span class="recvAssetTag zano">ZANO</span>
+            <span class="recvAssetTag fusd">fUSD</span>
+            <span class="recvAssetTag other">+ all Zano assets</span>
           </div>
           <div class="kicker">Your address</div>
           <div class="addressRow">
@@ -552,6 +571,18 @@
           </div>
           <div class="row">
             <button class="btn" value="cancel" data-tooltip="Close the receive window.">Close</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="devLogsDialog" class="dialog">
+        <form method="dialog" class="dialogBody devLogsBody">
+          <h3>Developer Logs</h3>
+          <div class="hint">Live backend output from simplewallet.</div>
+          <pre class="devLog" id="devLogArea"></pre>
+          <div class="row">
+            <button id="btnDevLogsClear" class="btn" type="button">Clear</button>
+            <button class="btn primary" value="cancel">Close</button>
           </div>
         </form>
       </dialog>

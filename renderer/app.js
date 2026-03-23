@@ -9,7 +9,7 @@ import { switchView, setStatus, setConnectionStatus, setUiBusy, setupTooltips, h
 import {
   walletRpc, startWalletRpc, stopWalletRpc,
   refreshBalance, refreshHistory,
-  clearWalletHistoryState, showUnlockOverlay,
+  clearWalletHistoryState, clearBalanceState, showUnlockOverlay,
   loadSettingsIntoDialog, saveSettingsFromDialog,
   resolveExePath, locateSimplewallet, refreshLocateButtonVis,
   showBaseAddress, renderReceiveQr,
@@ -23,6 +23,36 @@ import { checkHealth as swapHealthCheck, getRate as swapGetRate, createExchange,
 import { initNeuralCanvas, startNeural, stopNeural } from "./lib/neural-canvas.js";
 
 const log = createLogger("init");
+const _inFlightActions = new Set();
+
+async function runSingleFlight(key, fn, options = {}) {
+  if (_inFlightActions.has(key)) return false;
+  _inFlightActions.add(key);
+
+  const buttonIds = Array.isArray(options.buttonIds)
+    ? options.buttonIds
+    : options.buttonId ? [options.buttonId] : [];
+  const buttonState = [];
+
+  for (const id of buttonIds) {
+    const btn = $(id);
+    if (!btn) continue;
+    buttonState.push({ btn, disabled: btn.disabled, text: btn.textContent });
+    btn.disabled = true;
+    if (options.pendingLabel) btn.textContent = options.pendingLabel;
+  }
+
+  try {
+    await fn();
+    return true;
+  } finally {
+    for (const { btn, disabled, text } of buttonState) {
+      btn.disabled = disabled;
+      btn.textContent = text;
+    }
+    _inFlightActions.delete(key);
+  }
+}
 
 /** Returns false and logs an error if the password pair is invalid. */
 function validatePasswords(pwd, pwd2, logEl) {
@@ -37,7 +67,7 @@ async function getCurrentNodeLabel() {
     const addr = (cfg?.daemonAddress || "").trim();
     if (!addr) return "node";
     if (addr === "37.27.100.59:10500") return "Zano Official Node";
-    if (addr === "64.111.93.25:10500") return "ZanoNova Node";
+    if (addr === "72.62.241.93:11211") return "ZanoNova Node";
     return addr;
   } catch {
     return "node";
@@ -54,7 +84,8 @@ let _preflightAbort = false;
 function parseSimplewalletMilestone(stdoutTail, stderrTail) {
   const out = String(stdoutTail || "");
   const err = String(stderrTail || "");
-  const s = (out + "\n" + err).toLowerCase();
+  const raw = out + "\n" + err;
+  const s = raw.toLowerCase();
   if (!s.trim()) return null;
 
   // Order matters: pick the most informative/latest-stage milestone.
@@ -62,9 +93,96 @@ function parseSimplewalletMilestone(stdoutTail, stderrTail) {
   if (s.includes("detaching blockchain"))            return { subtext: "Wallet resyncing…", detail: "wallet_resync" };
   if (s.includes("loading wallet"))                  return { subtext: "Loading wallet…", detail: "wallet_loading" };
   if (s.includes("initializing wallet"))             return { subtext: "Initializing wallet…", detail: "wallet_loading" };
-  if (s.includes("starting in rpc server mode"))     return { subtext: "Starting wallet RPC…", detail: "wallet_starting" };
-  if (s.includes("daemon address"))                  return { subtext: "Connecting to daemon…", detail: "daemon_ok" };
-  return { subtext: "Starting wallet…", detail: "wallet_starting" };
+
+  // Extract real addresses from stdout for informative messages
+  if (s.includes("starting in rpc server mode")) {
+    const rpcMatch = raw.match(/(?:bind|listening|rpc).*?(\d{1,3}(?:\.\d{1,3}){3}:\d+)/i);
+    const addr = rpcMatch ? rpcMatch[1] : "127.0.0.1";
+    return { subtext: `Starting RPC on ${addr}…`, detail: "wallet_starting" };
+  }
+  if (s.includes("daemon address")) {
+    const daemonMatch = raw.match(/daemon\s+address[:\s]+(\S+)/i);
+    const addr = daemonMatch ? daemonMatch[1] : "daemon";
+    return { subtext: `Connecting to ${addr}…`, detail: "daemon_ok" };
+  }
+  return { subtext: "Initializing…", detail: "wallet_starting" };
+}
+
+// ---------------------------------------------------------------------------
+// Sync preview — show transactions discovered from stdout during rescan
+// ---------------------------------------------------------------------------
+
+function renderSyncPreviews(previews) {
+  const root = $("history");
+  if (!root) return;
+  // Don't overwrite real RPC data
+  if (state.historyInitialized) return;
+
+  root.replaceChildren();
+
+  // Sync info banner
+  const banner = document.createElement("div");
+  banner.className = "syncBanner";
+  banner.textContent = "Scanning blockchain \u2014 previewing discovered transactions\u2026";
+  root.appendChild(banner);
+
+  const tmpl = document.getElementById("tmplTxCard")?.content;
+  if (!tmpl) return;
+
+  // Show most recent first
+  const ordered = [...previews].reverse();
+  for (const tx of ordered) {
+    const isIncome = tx.direction === "in";
+    const el = tmpl.cloneNode(true).firstElementChild;
+    el.classList.add("txPreview");
+
+    const dirEl = el.querySelector(".txDir");
+    dirEl.textContent = isIncome ? "\u2193" : "\u2191";
+    dirEl.classList.add(isIncome ? "in" : "out");
+
+    el.querySelector(".txAmount").textContent = `${tx.amount} ZANO`;
+    const timeEl = el.querySelector(".txTime");
+    if (timeEl) timeEl.textContent = `height ${tx.height.toLocaleString()}`;
+    el.querySelector(".txMeta").textContent = isIncome ? "Received" : "Sent";
+
+    const circleEl = el.querySelector(".confCircle");
+    circleEl.classList.add("pending");
+    circleEl.title = "Scanning\u2026";
+    el.querySelector(".confLabel").textContent = "sync";
+
+    const hintEl = el.querySelector(".txHint");
+    if (hintEl) hintEl.replaceChildren();
+
+    const hashEl = el.querySelector(".hash");
+    const displayHash = tx.txHash ? tx.txHash.slice(0, 13) + "\u2026" : "";
+    hashEl.textContent = displayHash;
+
+    root.appendChild(el);
+  }
+}
+
+function clearSyncPreviews() {
+  const root = $("history");
+  if (!root) return;
+  if (root.querySelector(".syncBanner")) {
+    root.replaceChildren();
+  }
+  // Hide progress bar
+  const bar = $("syncProgressBar");
+  if (bar) bar.classList.add("hidden");
+}
+
+function updateSyncProgressBar(syncHeight) {
+  const bar = $("syncProgressBar");
+  const fill = $("syncProgressFill");
+  if (!bar || !fill) return;
+  if (!syncHeight || !state.daemonHeight) {
+    bar.classList.add("hidden");
+    return;
+  }
+  const pct = Math.min(99, Math.round(syncHeight / state.daemonHeight * 100));
+  bar.classList.remove("hidden");
+  fill.style.width = pct + "%";
 }
 
 async function startDaemonPreflight() {
@@ -77,6 +195,7 @@ async function startDaemonPreflight() {
       const res = await window.zano.daemonGetinfo();
       if (_preflightAbort) break;
       if (res?.ok) {
+        state.daemonHeight = res.height || null;
         setConnectionStatus({
           phase: "connecting",
           nodeLabel,
@@ -106,13 +225,40 @@ function stopDaemonPreflight() {
 // Unlock flow
 // ---------------------------------------------------------------------------
 
+let _unlockInProgress = false;
+
 async function unlockAndAutoStart() {
+  if (_unlockInProgress) return;
+  _unlockInProgress = true;
+  const unlockBtn = $("btnUnlock");
+  const prevUnlockDisabled = unlockBtn?.disabled ?? false;
+  const prevUnlockText = unlockBtn?.textContent ?? "";
+  if (unlockBtn) {
+    unlockBtn.disabled = true;
+    unlockBtn.textContent = "Unlocking...";
+  }
+
   const pwdEl  = $("unlockPassword");
   const hintEl = $("unlockHint");
-  if (!pwdEl || !hintEl) return;
+  if (!pwdEl || !hintEl) {
+    _unlockInProgress = false;
+    if (unlockBtn) {
+      unlockBtn.disabled = prevUnlockDisabled;
+      unlockBtn.textContent = prevUnlockText;
+    }
+    return;
+  }
   const pwd = pwdEl.value || "";
   setText(hintEl, "");
-  if (!pwd) { setText(hintEl, "Password required."); return; }
+  if (!pwd) {
+    setText(hintEl, "Password required.");
+    _unlockInProgress = false;
+    if (unlockBtn) {
+      unlockBtn.disabled = prevUnlockDisabled;
+      unlockBtn.textContent = prevUnlockText;
+    }
+    return;
+  }
 
   setSessionPassword(pwd);
   pwdEl.value = "";
@@ -138,6 +284,13 @@ async function unlockAndAutoStart() {
       $("unlockOverlay")?.classList.remove("hidden");
       startNeural();
     })
+    .finally(() => {
+      _unlockInProgress = false;
+      if (unlockBtn) {
+        unlockBtn.disabled = prevUnlockDisabled;
+        unlockBtn.textContent = prevUnlockText;
+      }
+    });
 }
 
 let _warmupToken = 0;
@@ -355,6 +508,7 @@ function wireUi() {
     try { await navigator.clipboard.writeText(words.join(" ")); } catch {}
   });
   $("btnSeedBackupContinue")?.addEventListener("click", async () => {
+    await runSingleFlight("seed-backup-continue", async () => {
     const cfg        = await window.zano.configGet().catch(() => ({}));
     const walletFile = (state.currentWalletFile || "").trim() || (cfg?.lastWalletPath || "").trim() || "";
     const password   = getSessionPassword();
@@ -383,6 +537,7 @@ function wireUi() {
     } finally {
       setUiBusy(false);
     }
+    }, { buttonId: "btnSeedBackupContinue", pendingLabel: "Starting..." });
   });
 
   // --- Create wallet wizard ---
@@ -402,6 +557,7 @@ function wireUi() {
     if (suggested) { selectedCreatePath = suggested; $("addWalletPathHint").textContent = suggested; }
   });
   $("btnCreateWalletWizard")?.addEventListener("click", async () => {
+    await runSingleFlight("create-wallet", async () => {
     const logEl   = $("addWalletLog");
     logEl.textContent = "";
     const name     = $("addWalletName").value.trim();
@@ -426,6 +582,7 @@ function wireUi() {
         selectedCreatePath = walletFile;
         $("addWalletPathHint").textContent = walletFile;
       }
+      await window.zano.simplewalletStop().catch(() => {});
       appendLog(logEl, "Generating new wallet…");
       const out = await window.zano.walletGenerate({ walletFile, password, simplewalletExePath: cfg.simplewalletExePath });
       appendLog(logEl, out.output || out);
@@ -443,6 +600,7 @@ function wireUi() {
     } finally {
       setUiBusy(false);
     }
+    }, { buttonId: "btnCreateWalletWizard", pendingLabel: "Creating..." });
   });
 
   // --- Restore wallet wizard ---
@@ -462,6 +620,7 @@ function wireUi() {
     if (suggested) { selectedRestorePath = suggested; $("restoreWalletPathHint").textContent = suggested; }
   });
   $("btnRestoreWalletWizard")?.addEventListener("click", async () => {
+    await runSingleFlight("restore-wallet", async () => {
     const logEl         = $("restoreWalletLog");
     logEl.textContent   = "";
     const name          = $("restoreWalletName").value.trim();
@@ -493,6 +652,7 @@ function wireUi() {
         selectedRestorePath = walletFile;
         $("restoreWalletPathHint").textContent = walletFile;
       }
+      await window.zano.simplewalletStop().catch(() => {});
       appendLog(logEl, "Restoring wallet…");
       const out = await window.zano.walletRestore({ walletFile, password, seedPhrase, seedPassphrase, simplewalletExePath: cfg.simplewalletExePath, daemonAddress: cfg.daemonAddress });
       appendLog(logEl, out.output || out);
@@ -502,6 +662,11 @@ function wireUi() {
       const walletInput2 = $("inputWalletFile");
       if (walletInput2) walletInput2.value = walletFile;
       setSessionPassword(password);
+
+      // Clear stale balance/history from the previous wallet before showing wallet view
+      clearBalanceState();
+      clearWalletHistoryState();
+      renderHeaderBalance();
 
       // Switch to wallet view first so the user sees progress
       switchView("wallet");
@@ -521,6 +686,7 @@ function wireUi() {
     } finally {
       setUiBusy(false);
     }
+    }, { buttonId: "btnRestoreWalletWizard", pendingLabel: "Restoring..." });
   });
 
   // --- Wallet view actions ---
@@ -606,8 +772,25 @@ function wireUi() {
     await refreshLocateButtonVis();
   });
 
+  // --- Developer logs dialog ---
+  $("btnDevLogs")?.addEventListener("click", async () => {
+    const logEl = $("devLogArea");
+    if (logEl) {
+      // Populate with full stdout tail from backend
+      const st = await window.zano.simplewalletState().catch(() => null);
+      logEl.textContent = st?.stdoutTail || "(no backend output yet)";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    $("devLogsDialog")?.showModal();
+  });
+  $("btnDevLogsClear")?.addEventListener("click", () => {
+    const logEl = $("devLogArea");
+    if (logEl) logEl.textContent = "";
+  });
+
   // --- Load wallet ---
   $("btnLoadWallet")?.addEventListener("click", async () => {
+    await runSingleFlight("load-wallet", async () => {
     const logEl = $("logArea");
     logEl.textContent = "";
     try {
@@ -631,25 +814,30 @@ function wireUi() {
     } finally {
       setUiBusy(false);
     }
+    }, { buttonId: "btnLoadWallet", pendingLabel: "Opening..." });
   });
 
   // --- Manual backend controls ---
   $("btnStartWallet")?.addEventListener("click", async () => {
-    try {
-      if (!getSessionPassword()) {
-        appendLog($("logArea"), "Unlock first to start automatically (or enter password and use Unlock screen).");
-        return;
+    await runSingleFlight("start-wallet", async () => {
+      try {
+        if (!getSessionPassword()) {
+          appendLog($("logArea"), "Unlock first to start automatically (or enter password and use Unlock screen).");
+          return;
+        }
+        await startWalletRpc(getSessionPassword());
+        appendLog($("logArea"), "Started.");
+      } catch (err) {
+        appendLog($("logArea"), err?.message || String(err));
+        setStatus("error");
       }
-      await startWalletRpc(getSessionPassword());
-      appendLog($("logArea"), "Started.");
-    } catch (err) {
-      appendLog($("logArea"), err?.message || String(err));
-      setStatus("error");
-    }
+    }, { buttonId: "btnStartWallet", pendingLabel: "Starting..." });
   });
   $("btnStopWallet")?.addEventListener("click", async () => {
-    await stopWalletRpc();
-    appendLog($("logArea"), "Stop requested.");
+    await runSingleFlight("stop-wallet", async () => {
+      await stopWalletRpc();
+      appendLog($("logArea"), "Stop requested.");
+    }, { buttonId: "btnStopWallet", pendingLabel: "Stopping..." });
   });
 
   // --- Copy buttons ---
@@ -822,10 +1010,16 @@ function wireUi() {
     $("sendConfirmDialog")?.close();
   });
 
+  let _sendInProgress = false;
   $("btnConfirmSend")?.addEventListener("click", async () => {
+    if (_sendInProgress) return;
+    _sendInProgress = true;
+    const btn = $("btnConfirmSend");
+    if (btn) btn.disabled = true;
     $("sendConfirmDialog")?.close();
     try { await send(); }
     catch (err) { appendLog($("sendLog"), err?.message || String(err)); }
+    finally { _sendInProgress = false; if (btn) btn.disabled = false; }
   });
 
   const sendAmountEl = $("sendAmount");
@@ -876,6 +1070,12 @@ function wireUi() {
     await refreshHistory(state.historyPage + 1);
   });
 
+  // --- Hide mining transactions toggle ---
+  $("hideMiningToggle")?.addEventListener("change", async (e) => {
+    state.hideMiningTxs = e.target.checked;
+    await refreshHistory(0).catch(() => {});
+  });
+
   // --- Swap section ---
   let _stopPoll = null;
   let _swapMeta = null;   // metadata for the active exchange (id, from, to, amounts, addresses, rate)
@@ -914,10 +1114,28 @@ function wireUi() {
     return state.usdPrices?.ZANO?.usd ?? null;
   }
 
+  function hasActiveSwap() {
+    return Boolean(_swapMeta?.id && !TERMINAL_STATUSES.has(_swapMeta?.status || ""));
+  }
+
+  function setSwapControlsLocked(locked) {
+    [
+      $("swapFromAmount"),
+      $("swapFromAsset"),
+      $("swapDenomToggle"),
+      $("btnSwapMax"),
+      $("btnSwapFlip"),
+    ].forEach((el) => {
+      if (el) el.disabled = Boolean(locked);
+    });
+  }
+
   function setSwapExecuteEnabled(enabled) {
     const btn = $("btnSwapExecute");
     if (!btn) return;
-    btn.disabled = !enabled;
+    const canExecute = Boolean(enabled) && !hasActiveSwap();
+    btn.disabled = !canExecute;
+    btn.textContent = hasActiveSwap() ? "Exchange In Progress" : "Start Exchange";
   }
 
   function syncSwapSelectors() {
@@ -1324,7 +1542,7 @@ function wireUi() {
     onSwapAmountChange();
   });
 
-  function setText(id, val) {
+  function setTextById(id, val) {
     const el = $(id);
     if (el) el.textContent = val ?? "";
   }
@@ -1335,9 +1553,23 @@ function wireUi() {
     area.classList.remove("hidden");
 
     const st = data.status || "wait";
-    if (TERMINAL_STATUSES.has(st)) clearSwapStorage();
-    area.classList.toggle("swapActive", !TERMINAL_STATUSES.has(st));
+    const isTerminal = TERMINAL_STATUSES.has(st);
+    if (_swapMeta) {
+      _swapMeta.status = st;
+      if (data.amountTo != null) _swapMeta.amountTo = data.amountTo;
+      if (data.rate != null) _swapMeta.rate = data.rate;
+      if (!isTerminal) saveSwapToStorage(_swapMeta);
+    }
+    if (isTerminal) {
+      clearSwapStorage();
+      if (_stopPoll) {
+        _stopPoll();
+        _stopPoll = null;
+      }
+    }
+    area.classList.toggle("swapActive", !isTerminal);
     const meta = _swapMeta || {};
+    setSwapControlsLocked(hasActiveSwap());
 
     // Step badge + title
     const STEP_MAP = {
@@ -1352,8 +1584,8 @@ function wireUi() {
       refunded:     { n: 1, of: 4, label: "Refunded" },
     };
     const step = STEP_MAP[st] || { n: 1, of: 4, label: st };
-    setText("swapStepBadge", `${step.n} OF ${step.of}`);
-    setText("swapStepTitle", step.label);
+    setTextById("swapStepBadge", `${step.n} OF ${step.of}`);
+    setTextById("swapStepTitle", step.label);
 
     // Exolix link — opens in system browser via setWindowOpenHandler in main.js
     const link = $("swapExolixLink");
@@ -1364,24 +1596,24 @@ function wireUi() {
 
     // Rate + TX ID row
     const rateVal = data.rate ?? meta.rate;
-    if (rateVal) setText("swapTxRate", `1 ${meta.from} ≈ ${rateVal} ${meta.to}`);
-    setText("swapTxId", meta.id || "");
+    if (rateVal) setTextById("swapTxRate", `1 ${meta.from} ≈ ${rateVal} ${meta.to}`);
+    setTextById("swapTxId", meta.id || "");
 
     // You send / You receive
-    setText("swapTxAmountFrom", meta.amount ?? "");
-    setText("swapTxCoinFrom", meta.from ?? "");
-    setText("swapTxAmountTo", data.amountTo ?? meta.amountTo ?? "");
-    setText("swapTxCoinTo", meta.to ?? "");
+    setTextById("swapTxAmountFrom", meta.sentAmountDisplay ?? meta.amount ?? "");
+    setTextById("swapTxCoinFrom", meta.from ?? "");
+    setTextById("swapTxAmountTo", data.amountTo ?? meta.amountTo ?? "");
+    setTextById("swapTxCoinTo", meta.to ?? "");
 
     // Addresses (truncated)
     const trunc = (a) => a ? `${a.slice(0, 8)}…${a.slice(-6)}` : "";
-    setText("swapTxDepositAddr", trunc(meta.depositAddress));
-    setText("swapTxWithdrawAddr", trunc(meta.withdrawalAddress));
+    setTextById("swapTxDepositAddr", trunc(meta.depositAddress));
+    setTextById("swapTxWithdrawAddr", trunc(meta.withdrawalAddress));
 
     // Confirmation count + fill bar
     const conf    = data.confirmations ?? 0;
     const confReq = data.confirmationsRequired ?? 10;
-    setText("swapConfirmCount", `${conf}/${confReq}`);
+    setTextById("swapConfirmCount", `${conf}/${confReq}`);
     const fill = $("swapStep1Fill");
     if (fill) fill.style.width = `${Math.min(100, (conf / confReq) * 100)}%`;
 
@@ -1394,6 +1626,14 @@ function wireUi() {
       el.classList.toggle("swapStepActive", n === activeN);
       el.classList.toggle("swapStepDone", n < activeN || st === "success");
     });
+
+    if (isTerminal) {
+      setSwapControlsLocked(false);
+      onSwapAmountChange();
+      return;
+    }
+
+    setSwapExecuteEnabled(false);
   }
 
   function resetSwapStatus() {
@@ -1403,6 +1643,8 @@ function wireUi() {
     if (link) { link.href = "#"; link.style.display = ""; }
     _swapMeta = null;
     clearSwapStorage();
+    setSwapControlsLocked(false);
+    setSwapExecuteEnabled(false);
   }
 
   $("btnCopyTxId")?.addEventListener("click", () => {
@@ -1411,6 +1653,7 @@ function wireUi() {
   });
 
   $("btnSwapExecute")?.addEventListener("click", async () => {
+    if (hasActiveSwap()) return;
     if (_stopPoll) { _stopPoll(); _stopPoll = null; }
     resetSwapStatus();
     const logEl = $("swapLog");
@@ -1461,6 +1704,8 @@ function wireUi() {
         depositAddress: depositAddr,
         withdrawalAddress,
         txHash: "",
+        sentAmountDisplay: "",
+        status: "wait",
       };
       saveSwapToStorage(_swapMeta);
       renderSwapStatus({ status: "wait", confirmations: 0, confirmationsRequired: 10 });
@@ -1499,7 +1744,38 @@ function wireUi() {
         return;
       }
 
-      if (_swapMeta) { _swapMeta.txHash = txHash; saveSwapToStorage(_swapMeta); }
+      if (_swapMeta) {
+        _swapMeta.txHash = txHash;
+        _swapMeta.sentAmountDisplay = `${atomicToZanoString(amountAtomic, dp)} ${from}`;
+        _swapMeta.status = "confirmation";
+        saveSwapToStorage(_swapMeta);
+      }
+
+      if (logEl) {
+        logEl.textContent = "";
+        const lines = [
+          ["Asset", `${from}`],
+          ["Amount", `${atomicToZanoString(amountAtomic, dp)} ${from}`],
+          ["To", depositAddr],
+          ["Tx Hash", txHash],
+        ];
+        for (const [label, value] of lines) {
+          const div = document.createElement("div");
+          const strong = document.createElement("strong");
+          strong.textContent = label;
+          div.append(strong, ": ");
+          if (label === "To" || label === "Tx Hash") {
+            const span = document.createElement("span");
+            span.className = "mono";
+            span.style.cssText = "word-break:break-all;font-size:.85em";
+            span.textContent = value;
+            div.appendChild(span);
+          } else {
+            div.append(String(value));
+          }
+          logEl.appendChild(div);
+        }
+      }
 
       _stopPoll = pollExchange(exchangeId, renderSwapStatus);
     } catch (err) {
@@ -1507,6 +1783,10 @@ function wireUi() {
       resetSwapStatus();
     } finally {
       setUiBusy(false);
+      if (hasActiveSwap()) {
+        setSwapControlsLocked(true);
+        setSwapExecuteEnabled(false);
+      }
     }
   });
 
@@ -1533,7 +1813,10 @@ function wireUi() {
   });
   $("btnConfirmViewSeed")?.addEventListener("click", async (e) => {
     e.preventDefault();
-    await handleConfirmViewSeed();
+    await runSingleFlight("view-seed", () => handleConfirmViewSeed(), {
+      buttonId: "btnConfirmViewSeed",
+      pendingLabel: "Loading...",
+    });
   });
 }
 
@@ -1596,24 +1879,114 @@ async function init() {
     startDaemonPreflight();
   }
 
+  // Track last-seen stdout length so we only append new lines to the log area
+  let _lastLoggedStdoutLen = 0;
+
   window.zano.onSimplewalletState((st) => {
     const raw = st?.status || "stopped";
     stopDaemonPreflight();
     if (raw !== "running") _warmupToken++;
+
+    // Stream new stdout content to log areas in real-time
+    const tail = st?.stdoutTail || "";
+    if (tail.length > _lastLoggedStdoutLen) {
+      const newContent = tail.slice(_lastLoggedStdoutLen);
+      const logEl = $("logArea");
+      if (logEl) {
+        // Only show meaningful lines (skip blank lines and key material)
+        const lines = newContent.split("\n").filter((l) => {
+          const t = l.trim();
+          return t && !t.startsWith("DECRYPTING ON KEY") && !t.startsWith("prepare_wti_decrypted");
+        });
+        if (lines.length) appendLog(logEl, lines.join("\n"));
+      }
+      // Also stream to developer logs dialog if open (unfiltered except keys)
+      const devLogEl = $("devLogArea");
+      if (devLogEl && $("devLogsDialog")?.open) {
+        const devLines = newContent.split("\n").filter((l) => {
+          const t = l.trim();
+          return t && !t.startsWith("DECRYPTING ON KEY");
+        });
+        if (devLines.length) {
+          devLogEl.textContent += devLines.join("\n") + "\n";
+          devLogEl.scrollTop = devLogEl.scrollHeight;
+        }
+      }
+      _lastLoggedStdoutLen = tail.length;
+    }
+    // Reset tracker when process restarts
+    if (raw === "stopped") _lastLoggedStdoutLen = 0;
+
     getCurrentNodeLabel().then((nodeLabel) => {
       if (raw === "running") {
         setConnectionStatus({ phase: "connected", nodeLabel, detail: "wallet_ready" });
+        clearSyncPreviews();
+        // Clear sync progress from status bar
+        const statusEl = $("swStatus");
+        if (statusEl) statusEl.style.removeProperty("--sync-pct");
         return;
       }
 
       if (raw === "starting" || raw === "stopping") {
         const ms = parseSimplewalletMilestone(st?.stdoutTail, st?.stderrTail);
+        let subtext = ms?.subtext || (raw === "stopping" ? "Stopping wallet…" : "Initializing…");
+        let detail = ms?.detail || "wallet_starting";
+
+        // Use the persistent isSyncing flag from the backend — it's set once
+        // when "resyncing" is first detected and survives stdout buffer truncation.
+        // Falls back to syncHeight check for robustness.
+        const isSyncing = (st?.isSyncing || st?.syncHeight > 0) && raw === "starting";
+
+        // Lazily fetch daemon height if missing (e.g. after restore clears state)
+        if (isSyncing && !state.daemonHeight) {
+          window.zano.daemonGetinfo().then((res) => {
+            if (res?.ok && res.height) state.daemonHeight = res.height;
+          }).catch(() => {});
+        }
+
+        if (isSyncing) {
+          const heightStr = st.syncHeight.toLocaleString();
+          const pct = state.daemonHeight
+            ? Math.min(99, Math.round(st.syncHeight / state.daemonHeight * 100))
+            : null;
+
+          // If milestone says RPC is starting and we're near completion, show finalizing
+          const isFinishing = pct != null && pct > 95
+            && (ms?.detail === "wallet_starting" || ms?.detail === "daemon_ok");
+
+          if (isFinishing) {
+            subtext = `Finalizing ${pct}%\u2026`;
+          } else {
+            const pctStr = pct != null ? `${pct}%` : "";
+            subtext = pctStr ? `Syncing ${pctStr}` : "Syncing\u2026";
+            if (st.syncTransferCount > 0) {
+              subtext += ` \u00B7 ${st.syncTransferCount} transfers`;
+            }
+            subtext += ` \u00B7 height ${heightStr}`;
+          }
+
+          // Force detail to wallet_resync so progress bar CSS stays active
+          detail = "wallet_resync";
+          updateSyncProgressBar(st.syncHeight);
+
+          // Drive the status bar progress indicator with real percentage
+          const statusEl = $("swStatus");
+          if (statusEl && pct != null) {
+            statusEl.style.setProperty("--sync-pct", pct + "%");
+          }
+        }
+
         setConnectionStatus({
           phase: "connecting",
           nodeLabel,
-          subtext: ms?.subtext || (raw === "stopping" ? "Stopping wallet…" : "Starting wallet…"),
-          detail: ms?.detail || "wallet_starting",
+          subtext,
+          detail,
         });
+
+        // Show preview transaction cards during sync
+        if (st?.syncPreviewTxs?.length && !state.historyInitialized) {
+          renderSyncPreviews(st.syncPreviewTxs);
+        }
         return;
       }
 
@@ -1659,12 +2032,30 @@ async function init() {
     if (e.key === "Enter") unlockAndAutoStart();
   });
 
+  let _refreshInProgress = false;
   setInterval(async () => {
-    if (state.uiBusy) return;
+    if (state.uiBusy || _refreshInProgress) return;
     const st = await window.zano.simplewalletState().catch(() => null);
     if (st?.status !== "running") return;
-    try { await refreshBalance(); } catch {}
-    try { await refreshHistory(); } catch {}
+    _refreshInProgress = true;
+    try {
+      await refreshBalance();
+      await refreshHistory();
+
+      // Post-connect sync monitoring: if wallet height < daemon height,
+      // the wallet is still catching up after RPC became available.
+      if (state.walletHeight && state.daemonHeight && state.walletHeight < state.daemonHeight - 5) {
+        const pct = Math.min(99, Math.round(state.walletHeight / state.daemonHeight * 100));
+        const nodeLabel = await getCurrentNodeLabel().catch(() => "node");
+        setConnectionStatus({
+          phase: "connected",
+          nodeLabel,
+          subtext: `Catching up\u2026 ${pct}%`,
+          detail: "wallet_ready",
+        });
+      }
+    } catch {}
+    finally { _refreshInProgress = false; }
   }, AUTO_REFRESH_MS);
 
   log.info("initialized");

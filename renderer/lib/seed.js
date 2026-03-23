@@ -4,29 +4,42 @@ import { getSessionPassword, state } from "./state.js";
 import { playSeedSound } from "./audio.js";
 
 const log = createLogger("seed");
+const SEED_WORD_RE = /^[a-z]+$/;
+
+function tokenizeSeedLine(line) {
+  return String(line || "")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((w) => SEED_WORD_RE.test(w));
+}
 
 export function extractSeedWords(stdoutText) {
-  const text  = String(stdoutText || "");
-  const lines = text.split(/\r?\n/);
-  let best    = [];
-  for (const line of lines) {
-    const words = line.trim().split(/\s+/).filter((w) => /^[a-z]+$/.test(w));
-    if (words.length >= 24 && words.length <= 26 && words.length > best.length) {
-      best = words;
+  const lines = String(stdoutText || "").split(/\r?\n/);
+  const candidates = new Map();
+
+  for (let start = 0; start < lines.length; start++) {
+    let words = [];
+    for (let end = start; end < Math.min(lines.length, start + 4); end++) {
+      const lineWords = tokenizeSeedLine(lines[end]);
+      if (!lineWords.length) {
+        if (words.length) break;
+        continue;
+      }
+      words = words.concat(lineWords);
+      if (words.length >= 24 && words.length <= 26) {
+        candidates.set(words.join(" "), [...words]);
+      }
+      if (words.length > 26) break;
     }
   }
-  if (best.length) return best;
-  // Fallback: scan full output for a contiguous run of lowercase words.
-  const all = text.toLowerCase().split(/\s+/).filter((w) => /^[a-z]+$/.test(w));
-  for (let n = 26; n >= 24; n--) {
-    if (all.length >= n) return all.slice(-n);
-  }
-  return [];
+
+  if (candidates.size !== 1) return [];
+  return [...candidates.values()][0];
 }
 
 export function renderSeedWordsInto(el, words) {
   if (!el) return;
-  el.innerHTML = "";
+  el.replaceChildren();
   words.forEach((w, i) => {
     const chip = document.createElement("div");
     chip.className = "seedChip";
@@ -50,7 +63,7 @@ export async function showSeedBackupForWallet({ walletFile, password, name }) {
   if (meta)  meta.textContent  = `${name || "Wallet"} · ${walletFile}`;
   if (ack)   ack.checked       = false;
   if (cont)  cont.disabled     = true;
-  if (wordsEl) wordsEl.innerHTML = "";
+  if (wordsEl) wordsEl.replaceChildren();
 
   const out   = await window.zano.walletShowSeed({
     walletFile,
@@ -60,6 +73,9 @@ export async function showSeedBackupForWallet({ walletFile, password, name }) {
     daemonAddress:          cfg.daemonAddress,
   });
   const words = extractSeedWords(out?.output || "");
+  if (!words.length) {
+    throw new Error("Could not parse seed phrase output safely.");
+  }
   renderSeedWordsInto(wordsEl, words);
 }
 
@@ -90,7 +106,7 @@ export async function handleConfirmViewSeed() {
   const seedView = $("seedViewDialog");
   const wordsEl  = $("seedWords");
   if (!seedView || !wordsEl) return;
-  wordsEl.innerHTML = "";
+  wordsEl.replaceChildren();
 
   try {
     log.info("fetching seed phrase");

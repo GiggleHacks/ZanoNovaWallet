@@ -27,6 +27,7 @@ export const state = {
   historyPage: 0,
   historyInitialized: false,
   historyAssetFilter: "all",
+  hideMiningTxs: true,
   knownIncomeTxs: new Set(),
 
   // Audio
@@ -45,6 +46,10 @@ export const state = {
 
   // Send flow
   sendAmountMode: "ASSET", // "ASSET" | "USD" (ZANO only)
+
+  // Sync progress (daemon height for percentage calculation, wallet height from RPC)
+  daemonHeight: null,
+  walletHeight: null,
 
   // UI
   uiBusy: false,

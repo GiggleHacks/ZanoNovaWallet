@@ -8,6 +8,7 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const crypto = require("crypto");
 
 const projectRoot = path.resolve(__dirname, "..");
 const stagingDir = path.join(projectRoot, "build", "vendor", "simplewallet-win");
@@ -15,6 +16,22 @@ const stagingDir = path.join(projectRoot, "build", "vendor", "simplewallet-win")
 // to ship a newer backend; see https://github.com/hyle-team/zano/releases
 const WINDOWS_ZIP_URL =
   "https://build.zano.org/builds/zano-win-x64-release-v2.1.15.457[8621a68].zip";
+// Source: signed hashes published in the official Zano release notes.
+const WINDOWS_ZIP_SHA256 =
+  "e3867efe1288c96dcaf573ad0a0c00ff1bdb4614fd9697a4252742dd775829a6";
+
+function sha256Hex(buf) {
+  return crypto.createHash("sha256").update(buf).digest("hex");
+}
+
+function assertExpectedSha256(buf, expected, label) {
+  const actual = sha256Hex(buf);
+  if (actual !== expected) {
+    throw new Error(
+      `${label} SHA-256 mismatch.\nExpected: ${expected}\nActual:   ${actual}\nRefusing to stage an unverified build.`
+    );
+  }
+}
 
 function findSimplewalletDir(dir, visited = new Set()) {
   if (visited.has(dir)) return null;
@@ -52,6 +69,7 @@ async function main() {
     process.exit(1);
   }
   const zipBuf = Buffer.from(await zipRes.arrayBuffer());
+  assertExpectedSha256(zipBuf, WINDOWS_ZIP_SHA256, path.basename(WINDOWS_ZIP_URL));
   const tempDir = path.join(os.tmpdir(), `zano-nova-prepare-${Date.now()}`);
   fs.mkdirSync(tempDir, { recursive: true });
   try {

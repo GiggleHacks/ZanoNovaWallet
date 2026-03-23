@@ -256,6 +256,51 @@ let simplewalletProc = null;
 let simplewalletState = { status: "stopped" };
 let lastStartedWalletFile = null;
 
+// Persistent sync flag — set once when "resyncing" is first detected in stdout.
+// Survives stdout buffer truncation so sync UI never loses state.
+let _isSyncing = false;
+// Auto-restart: allow one retry if simplewallet crashes during sync.
+let _syncRestartsRemaining = 0;
+let _lastStartArgs = null;
+
+// ---------------------------------------------------------------------------
+// Sync progress parsing — extract block heights and transaction previews
+// from simplewallet stdout during blockchain rescan.
+// ---------------------------------------------------------------------------
+
+function parseSyncProgress(chunk, existing) {
+  let syncHeight = existing?.syncHeight ?? null;
+  let syncTransferCount = existing?.syncTransferCount ?? 0;
+  const previews = [...(existing?.syncPreviewTxs || [])];
+
+  // Extract block heights from "at height NNNNNN"
+  const heightMatches = chunk.match(/at height (\d+)/g);
+  if (heightMatches) {
+    for (const hm of heightMatches) {
+      const h = parseInt(hm.match(/\d+/)[0], 10);
+      if (h > (syncHeight ?? 0)) syncHeight = h;
+    }
+  }
+
+  // Parse "Received/Spent native coins" or "Received/Spent asset" lines for previews
+  const txRegex = /(Received|Spent) (?:native coins|asset [a-f0-9.]+), transfer #\d+, amount: ([\d.]+).*?with tx: ([a-f0-9]+).*?at height (\d+)/g;
+  let m;
+  while ((m = txRegex.exec(chunk)) !== null) {
+    syncTransferCount++;
+    previews.push({
+      direction: m[1] === "Received" ? "in" : "out",
+      amount: m[2],
+      txHash: m[3],
+      height: parseInt(m[4], 10),
+    });
+  }
+
+  // Cap at 20 previews to prevent unbounded growth
+  const cappedPreviews = previews.length > 20 ? previews.slice(-20) : previews;
+
+  return { syncHeight, syncTransferCount, syncPreviewTxs: cappedPreviews };
+}
+
 function init(win) {
   mainWindow = win;
 }
@@ -301,8 +346,11 @@ async function startSimplewallet({ walletFile, password, simplewalletExePath, da
   ];
 
   intentionalStop = false;
+  _isSyncing = false;
+  _syncRestartsRemaining = 1;
+  _lastStartArgs = { walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort };
   lastStartedWalletFile = walletFile;
-  setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null });
+  setSimplewalletState({ status: "starting", lastError: null, lastExitCode: null, isSyncing: false });
 
   const exeDir = path.dirname(simplewalletExePath);
   const spawnEnv = { ...process.env, PATH: exeDir + path.delimiter + (process.env.PATH || "") };
@@ -319,25 +367,57 @@ async function startSimplewallet({ walletFile, password, simplewalletExePath, da
   let stderr = "";
 
   simplewalletProc.stdout.on("data", (buf) => {
-    stdout += buf.toString("utf8");
+    const chunk = buf.toString("utf8");
+    stdout += chunk;
+    // Detect resync once — persists even after buffer truncation
+    if (!_isSyncing) {
+      const lower = chunk.toLowerCase();
+      if (lower.includes("wallet is getting fully resynced") || lower.includes("detaching blockchain")) {
+        _isSyncing = true;
+      }
+    }
     // Don't flip to "running" based on output alone — RPC readiness is the signal.
-    setSimplewalletState({ stdoutTail: stdout.slice(-8000) });
+    // Parse sync progress data (block heights, transaction previews) for live UI.
+    const sync = parseSyncProgress(chunk, simplewalletState);
+    setSimplewalletState({
+      stdoutTail: stdout.slice(-32000),
+      isSyncing: _isSyncing,
+      syncHeight: sync.syncHeight,
+      syncTransferCount: sync.syncTransferCount,
+      syncPreviewTxs: sync.syncPreviewTxs,
+    });
   });
   simplewalletProc.stderr.on("data", (buf) => {
     stderr += buf.toString("utf8");
-    setSimplewalletState({ stderrTail: stderr.slice(-8000) });
+    setSimplewalletState({ stderrTail: stderr.slice(-32000) });
   });
   simplewalletProc.on("exit", (code) => {
-    setSimplewalletState({ status: "stopped", lastExitCode: code ?? null });
+    const wasSyncing = _isSyncing;
+    setSimplewalletState({ status: "stopped", lastExitCode: code ?? null, isSyncing: false });
     simplewalletProc = null;
+
+    // Auto-restart once if simplewallet crashes during sync (not intentional stop)
+    if (!intentionalStop && wasSyncing && _syncRestartsRemaining > 0 && _lastStartArgs) {
+      _syncRestartsRemaining--;
+      const restartArgs = { ..._lastStartArgs };
+      setTimeout(() => {
+        startSimplewallet(restartArgs).catch(() => {});
+      }, 2000);
+    }
+    // Clear stored password from memory
+    if (_lastStartArgs) _lastStartArgs.password = null;
   });
   simplewalletProc.on("error", (err) => {
-    setSimplewalletState({ status: "stopped", lastError: err?.message || String(err) });
+    setSimplewalletState({ status: "stopped", lastError: err?.message || String(err), isSyncing: false });
     simplewalletProc = null;
   });
 }
 
 let intentionalStop = false;
+
+function clearStartArgs() {
+  _lastStartArgs = null;
+}
 
 function stopSimplewallet() {
   if (!simplewalletProc || simplewalletProc.exitCode != null) return;
@@ -349,7 +429,7 @@ function stopSimplewallet() {
 }
 
 async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 120_000 }) {
-  const deadline = Date.now() + timeoutMs;
+  let deadline = Date.now() + timeoutMs;
   const url = `http://${rpcBindIp}:${rpcBindPort}/json_rpc`;
 
   while (Date.now() < deadline) {
@@ -360,11 +440,21 @@ async function waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs = 120_0
       );
     }
 
+    // Adaptive timeout: if simplewallet is actively scanning the blockchain
+    // (resync / seed restore), keep extending the deadline so it doesn't
+    // time out before the scan finishes.
+    const tail = simplewalletState?.stdoutTail || "";
+    if (tail.includes("at height") || tail.includes("resynced")) {
+      deadline = Math.max(deadline, Date.now() + 120_000);
+    }
+
     const portOpen = await new Promise((resolve) => {
+      let resolved = false;
+      const done = (v) => { if (!resolved) { resolved = true; resolve(v); } };
       const s = net.connect({ host: rpcBindIp, port: rpcBindPort });
-      s.once("connect", () => { s.end(); resolve(true); });
-      s.once("error", () => resolve(false));
-      s.setTimeout(150, () => resolve(false));
+      s.once("connect", () => { s.end(); done(true); });
+      s.once("error", () => { s.destroy(); done(false); });
+      s.setTimeout(150, () => { s.destroy(); done(false); });
     });
 
     if (portOpen) {
@@ -402,9 +492,13 @@ module.exports = {
   simplewalletExeCandidates,
   startSimplewallet,
   stopSimplewallet,
+  clearStartArgs,
   waitForWalletRpcReady,
   jsonRpcCall,
   spawnSimplewalletEnv,
   killProcessOnPort,
+  isManagedProcessRunning() {
+    return Boolean(simplewalletProc && simplewalletProc.exitCode == null);
+  },
   getLastStartedWalletFile() { return lastStartedWalletFile; },
 };

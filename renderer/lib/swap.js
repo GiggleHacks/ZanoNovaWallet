@@ -4,6 +4,35 @@ const log = createLogger("swap");
 
 const POLL_INTERVAL_MS = 12_000;
 
+function normalizeSwapStatus(status) {
+  const raw = String(status || "").trim().toLowerCase();
+  if (!raw) return "wait";
+
+  const STATUS_MAP = {
+    wait: "wait",
+    waiting: "wait",
+    confirmation: "confirmation",
+    confirming: "confirmation",
+    exchanging: "exchanging",
+    exchange: "exchanging",
+    sending: "sending",
+    completed: "success",
+    complete: "success",
+    success: "success",
+    refund: "refund",
+    refunding: "refund",
+    refunded: "refunded",
+    overdue: "overdue",
+    expired: "overdue",
+    failed: "error",
+    error: "error",
+    cancelled: "error",
+    canceled: "error",
+  };
+
+  return STATUS_MAP[raw] || raw;
+}
+
 export async function checkHealth() {
   try {
     const data = await window.zano.swapRate({ from: "ZANO", to: "fUSD", amount: 1 });
@@ -29,6 +58,7 @@ export async function createExchange(fromTicker, toTicker, amount, withdrawalAdd
 
 export async function getExchangeStatus(exchangeId) {
   const data = await window.zano.swapStatus(exchangeId);
+  data.status = normalizeSwapStatus(data?.status);
   log.info("exchange status:", data);
   return data;
 }

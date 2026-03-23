@@ -14,6 +14,8 @@ const {
 const sw = require("./simplewallet");
 
 let mainWindow = null;
+let simplewalletStartInFlight = null;
+let simplewalletStopInFlight = null;
 
 function init(win) {
   mainWindow = win;
@@ -65,18 +67,14 @@ ipcMain.handle("config:set", (_evt, partial) => setConfig(partial || {}));
 // ---------------------------------------------------------------------------
 
 ipcMain.handle("simplewallet:resolveExe", async (_evt, overridePath) => {
-  const cfg = getConfig();
-  const rpcBindPort = cfg.walletRpcBindPort;
-  // Kill any existing process on the port before copying binary files
-  // This prevents EBUSY errors when simplewallet.exe is locked by a stale process
-  sw.killProcessOnPort(rpcBindPort);
-  // Wait a moment for the file handles to be released
-  await new Promise(r => setTimeout(r, 500));
   const resolved = sw.resolveSimplewalletExePath(overridePath);
   return { resolved, candidates: sw.simplewalletExeCandidates(overridePath) };
 });
 
 ipcMain.handle("simplewallet:start", async (_evt, input) => {
+  if (simplewalletStartInFlight) return simplewalletStartInFlight;
+
+  simplewalletStartInFlight = (async () => {
   const cfg = getConfig();
   const { walletPath } = getUserDataPaths();
 
@@ -92,18 +90,26 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
     const url = `http://${rpcBindIp}:${rpcBindPort}/json_rpc`;
     await sw.jsonRpcCall({ url, method: "getaddress", params: {}, timeoutMs: 1500 });
 
-    // If a different wallet file is being opened, don't reuse — kill and respawn.
     const lastWallet = sw.getLastStartedWalletFile();
-    if (lastWallet && walletFile && lastWallet !== walletFile) {
-      sw.stopSimplewallet();
-      await new Promise(r => setTimeout(r, 500));
-      sw.killProcessOnPort(rpcBindPort);
-      await new Promise(r => setTimeout(r, 300));
-      // Fall through to spawn a fresh process below.
-    } else {
+    const sameWallet =
+      lastWallet &&
+      walletFile &&
+      path.resolve(lastWallet) === path.resolve(walletFile);
+    const canReuse =
+      sw.isManagedProcessRunning() &&
+      sameWallet;
+
+    if (canReuse) {
       sw.setSimplewalletState({ status: "running", rpcUrl: url, reusedExisting: true });
       return { ok: true, state: sw.getSimplewalletState(), rpcUrl: url, reusedExisting: true };
     }
+
+    // Something is answering on the wallet RPC port, but we cannot prove it is
+    // the managed process for this exact wallet file. Never trust or reuse it.
+    sw.stopSimplewallet();
+    await new Promise(r => setTimeout(r, 500));
+    sw.killProcessOnPort(rpcBindPort);
+    await new Promise(r => setTimeout(r, 300));
   } catch {
     // Not available — kill any orphaned process on the port before spawning.
     sw.killProcessOnPort(rpcBindPort);
@@ -116,7 +122,7 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
     throw new Error(`${bin} not found. Bundle it with the app or choose a source binary in Settings → Wallet so the app can copy it into its data directory.`);
   }
   await sw.startSimplewallet({ walletFile, password, simplewalletExePath, daemonAddress, rpcBindIp, rpcBindPort });
-  const ready = await sw.waitForWalletRpcReady({ rpcBindIp, rpcBindPort }).catch((e) => {
+  const ready = await sw.waitForWalletRpcReady({ rpcBindIp, rpcBindPort, timeoutMs: 600_000 }).catch((e) => {
     const st = sw.getSimplewalletState();
     if (st.status !== "stopped") sw.setSimplewalletState({ status: "stopped" });
     throw e;
@@ -127,12 +133,30 @@ ipcMain.handle("simplewallet:start", async (_evt, input) => {
   }
 
   sw.setSimplewalletState({ status: "running", rpcUrl: ready.url });
+  sw.clearStartArgs(); // Clear stored password from memory
   return { ok: true, state: sw.getSimplewalletState(), rpcUrl: ready.url };
+  })();
+
+  try {
+    return await simplewalletStartInFlight;
+  } finally {
+    simplewalletStartInFlight = null;
+  }
 });
 
 ipcMain.handle("simplewallet:stop", async () => {
-  sw.stopSimplewallet();
-  return { ok: true };
+  if (simplewalletStopInFlight) return simplewalletStopInFlight;
+
+  simplewalletStopInFlight = (async () => {
+    sw.stopSimplewallet();
+    return { ok: true };
+  })();
+
+  try {
+    return await simplewalletStopInFlight;
+  } finally {
+    simplewalletStopInFlight = null;
+  }
 });
 
 ipcMain.handle("simplewallet:state", async () => sw.getSimplewalletState());
@@ -222,10 +246,14 @@ ipcMain.handle("wallet:restore", async (_evt, input) => {
   fs.mkdirSync(walletsDir, { recursive: true });
 
   const { opts } = sw.spawnSimplewalletEnv(simplewalletExePath);
+  // Do NOT pass --daemon-address here. With it, simplewallet connects to the
+  // daemon and does a full blockchain rescan before exiting — which can take
+  // hours or hang forever if the daemon is unreachable.  Without it, the
+  // wallet file is created offline (keys only) in seconds.  The actual sync
+  // happens later in RPC mode (startWalletRpc) with proper UI feedback.
   const args = [
     `--restore-wallet=${walletFile}`,
     `--password=${password}`,
-    `--daemon-address=${daemonAddress}`,
   ];
   const proc = spawn(simplewalletExePath, args, opts);
 
@@ -236,16 +264,37 @@ ipcMain.handle("wallet:restore", async (_evt, input) => {
   proc.stdin.write(`${seedPassphrase}\n`);
   proc.stdin.end();
 
-  const out = await collectOutput(proc);
+  const out = await Promise.race([
+    collectOutput(proc),
+    new Promise((_, reject) => setTimeout(() => {
+      try { proc.kill(); } catch {}
+      reject(new Error("Wallet restore timed out. The seed phrase may be invalid."));
+    }, 120_000)),
+  ]);
   const combined = (out.stdout + "\n" + out.stderr).toLowerCase();
 
   if (out.code !== 0) {
     // Check for successful restore despite non-zero exit (some versions do this)
     if (combined.includes("restored") || combined.includes("wallet has been restored")) {
+      // Verify wallet file was actually written
+      try {
+        const stats = fs.statSync(walletFile);
+        if (!stats || stats.size === 0) throw new Error("Wallet file is empty after restore.");
+      } catch (fsErr) {
+        throw new Error(`Wallet restore reported success but file is missing or empty:\n${walletFile}\n${fsErr.message}`);
+      }
       return { ok: true, output: out.stdout + (out.stderr ? "\n" + out.stderr : "") };
     }
     // Include raw output so user can see what simplewallet actually said
     throw new Error(`Wallet restore failed (exit ${out.code}).${dllErrorHint(out.code)}\n${out.stderr || out.stdout}`);
+  }
+
+  // Verify wallet file exists and has content
+  try {
+    const stats = fs.statSync(walletFile);
+    if (!stats || stats.size === 0) throw new Error("Wallet file is empty after restore.");
+  } catch (fsErr) {
+    throw new Error(`Wallet file verification failed after restore:\n${walletFile}\n${fsErr.message}`);
   }
   return { ok: true, output: out.stdout };
 });
