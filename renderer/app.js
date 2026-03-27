@@ -1024,7 +1024,7 @@ function wireUi() {
 
   const sendAmountEl = $("sendAmount");
   if (sendAmountEl) {
-    const STEP = 0.1;
+    const STEP = 0.01;
     const getMaxZano = () => {
       const maxAtomic = getMaxSendableAtomic(state.selectedAssetId);
       if (maxAtomic == null) return Infinity;
@@ -1037,7 +1037,7 @@ function wireUi() {
       e.preventDefault();
       const current = parseFloat(sendAmountEl.value) || 0;
       const delta   = e.deltaY > 0 ? -STEP : STEP;
-      let next      = Math.round(Math.max(0, current + delta) * 10) / 10;
+      let next      = Math.max(0, +(current + delta).toFixed(12));
       const maxZ    = getMaxZano();
       if (Number.isFinite(maxZ)) next = Math.min(next, maxZ);
       sendAmountEl.value = next;
@@ -1048,7 +1048,6 @@ function wireUi() {
       if (Number.isNaN(raw) || raw < 0) { sendAmountEl.value = ""; return; }
       const maxZ = getMaxZano();
       let v      = Number.isFinite(maxZ) ? Math.min(raw, maxZ) : raw;
-      v = Math.round(v * 10) / 10;
       if (v !== raw) sendAmountEl.value = String(v);
     });
   }
